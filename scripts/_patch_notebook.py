@@ -421,6 +421,321 @@ if have_episodes:
 # Drive
 # ---------------------------------------------------------------------------
 
+CELL_INVENTORY_MD = """\
+## Section 5c -- Component Inventory
+
+Before training, print every env / agent / engine / scenario / reward
+component the project ships with. The previous version of this notebook
+only ever instantiated `FreshPriceEnv` (the simple single-store env),
+which made it look like the rest of the codebase wasn't real. The
+showcase cells below (5c -> 5f) prove every component actually loads
+and steps end-to-end.
+"""
+
+CELL_INVENTORY_CODE = """\
+# ============================================================
+# CELL 5c -- COMPONENT INVENTORY
+# Imports every env/agent/engine and prints what's available.
+# Run after the env smoke test (cell-env-smoke).
+# ============================================================
+
+import sys, os
+sys.path.insert(0, REPO_DIR)
+
+from freshprice_env.enums import (
+    CurriculumScenario, BriefEngineType, ExpiryUrgency, BatchStatus,
+)
+
+# --- Environments ---
+from freshprice_env.freshprice_env       import FreshPriceEnv
+from freshprice_env.long_horizon_env     import LongHorizonFreshPriceEnv
+from freshprice_env.market_commons_env   import MarketCommonsEnv
+from freshprice_env.multi_agent_env      import MultiAgentFreshPriceEnv
+from freshprice_env.multi_store_env      import MultiStoreFreshPriceEnv
+from freshprice_env.negotiation_env      import NegotiationEnv
+
+# --- Agents ---
+from freshprice_env.agents.farmer_agent           import FarmerAgent, build_default_farmer_pool
+from freshprice_env.agents.competitor_store_agent import CompetitorStoreAgent, CompetitorPersona
+from freshprice_env.agents.consumer_agent         import ConsumerAgent
+from freshprice_env.agents.consumer_cohort_agent  import ConsumerCohortAgent, DEFAULT_COHORTS
+from freshprice_env.agents.regulator_agent        import RegulatorAgent
+from freshprice_env.agents.influencer_agent       import InfluencerAgent
+from freshprice_env.agents.oversight_auditor      import OversightAuditor
+
+# --- Engines ---
+from freshprice_env.engines.pricing_engine     import PricingEngine
+from freshprice_env.engines.farmer_engine      import FarmerEngine
+from freshprice_env.engines.trend_engine       import TrendEngine
+from freshprice_env.engines.rider_pool_engine  import RiderPoolEngine
+from freshprice_env.engines.liquidation_engine import LiquidationEngine
+
+print("=" * 60)
+print(" QStorePrice Component Inventory")
+print("=" * 60)
+
+print(\"\\nEnvironments\")
+for cls in [FreshPriceEnv, LongHorizonFreshPriceEnv, MarketCommonsEnv,
+            MultiAgentFreshPriceEnv, MultiStoreFreshPriceEnv, NegotiationEnv]:
+    print(f"  - {cls.__name__:30s}  {cls.__module__}")
+
+print(\"\\nAgents (the 6 + 1 actors)\")
+for cls in [FarmerAgent, CompetitorStoreAgent, ConsumerAgent,
+            ConsumerCohortAgent, InfluencerAgent, RegulatorAgent,
+            OversightAuditor]:
+    print(f"  - {cls.__name__}")
+
+print(\"\\nEngines (reward producers)\")
+for cls in [PricingEngine, FarmerEngine, TrendEngine,
+            RiderPoolEngine, LiquidationEngine]:
+    print(f"  - {cls.__name__}")
+
+print(\"\\nCurriculum scenarios\")
+for s in CurriculumScenario:
+    print(f"  - {s.name:18s}  (level {s.value})")
+
+print(\"\\nBrief engines (the LLM writes one of these per tick)\")
+for e in BriefEngineType:
+    print(f"  - {e.name}")
+
+print(\"\\nReward components (per brief)\")
+print(\"  r1_pricing            PricingEngine.tick (discount timing)\")
+print(\"  r2_farmer             FarmerEngine (accept/counter/decline)\")
+print(\"  r3_trend              TrendEngine (restock decisions)\")
+print(\"  r4_plan_adherence     AgentNotebook (honored - broken)\")
+print(\"  r5_reasoning_tokens   reward.compute_token_reward (capped)\")
+print(\"  r6_delivery_quality   RiderPoolEngine (Blinkit on-time vs transit-spoil)\")
+print(\"  r7_liquidation        LiquidationEngine (B2B firesale, anti-hack guarded)\")
+print(\"  cooperation_index     MarketCommonsEnv (pareto-improving exchanges)\")
+
+print(\"\\nDefault consumer cohorts (Blinkit-style)\")
+for c in DEFAULT_COHORTS:
+    print(f"  - {c.name:8s}  weight={c.weight:.2f}  elasticity={c.price_elasticity:.2f}  "
+          f"eta_tol={c.eta_tolerance_minutes}m  fresh_tol={c.freshness_tolerance:.2f}\")
+
+print(\"\\nCompetitor personas\")
+for p in CompetitorPersona:
+    print(f"  - {p.name}\")
+"""
+
+
+CELL_COMMONS_SMOKE_MD = """\
+## Section 5d -- MarketCommonsEnv smoke (6+1 multi-agent)
+
+Runs three steps of the headline multi-agent env: hero + 1 competitor +
+5-farmer pool + regulator + auditor + bus, with the same fallback brief
+the existing smoke test uses. Prints competitor actions, bus messages,
+cooperation_index and (if available) the auditor's recommendation.
+
+If this fails, the multi-agent half of the project is broken --
+investigate before running the GRPO cell.
+"""
+
+CELL_COMMONS_SMOKE_CODE = """\
+# ============================================================
+# CELL 5d -- MarketCommonsEnv smoke (6+1 multi-agent)
+# ============================================================
+
+import sys, os
+sys.path.insert(0, REPO_DIR)
+
+from freshprice_env.market_commons_env import MarketCommonsEnv
+from freshprice_env.enums import CurriculumScenario
+from freshprice_env.persistence.reputation_store import ReputationStore
+
+FALLBACK_BRIEF = '''SITUATION: 6+1 multi-agent smoke -- holding price.
+SIGNAL ANALYSIS: N/A
+VIABILITY CHECK: N/A
+RECOMMENDATION: Hold price; observe competitor + farmer pool.
+DIRECTIVE:
+{\"engine\": \"PRICING\", \"actions\": []}
+CONFIDENCE: MEDIUM'''
+
+# Use an in-memory reputation store so this smoke does not pollute the
+# default SQLite file (CLAUDE.md rule: tests construct their own).
+env = MarketCommonsEnv(
+    scenario=CurriculumScenario.CRISIS_WEEK,
+    seed=42,
+    n_competitors=1,
+    reputation_store=ReputationStore(':memory:'),
+    enable_regulator=True,
+)
+obs, info = env.reset()
+print(f"MarketCommonsEnv reset: scenario={info.get('scenario')} "
+      f"engine={info.get('engine_type')} mode={info.get('mode')} "
+      f"n_competitors={info.get('n_competitors')}")
+print(f"  observation length: {len(obs)} chars")
+
+total = 0.0
+for step in range(3):
+    obs, reward, done, truncated, info = env.step(FALLBACK_BRIEF)
+    total += float(reward)
+    print(f"\\n  Step {step+1}: reward={float(reward):+.4f} "
+          f"cooperation_index={info.get('cooperation_index', 0):.4f}")
+    comp_actions = info.get('competitor_actions') or []
+    if comp_actions:
+        print(f"    competitor actions ({len(comp_actions)}):")
+        for a in comp_actions[:3]:
+            print(f"      - {a}\")
+    bus_msgs = info.get('bus_messages_this_step') or []
+    if bus_msgs:
+        print(f"    bus messages this step: {len(bus_msgs)}")
+        for m in bus_msgs[:3]:
+            print(f"      - {m.get('verb','?')} from {m.get('sender','?')}\")
+
+print(f"\\n3-step cumulative reward: {total:+.4f}")
+print(\"MarketCommonsEnv smoke PASSED.\")
+"""
+
+
+CELL_BLINKIT_SMOKE_MD = """\
+## Section 5e -- Blinkit layer smoke (rider + cohorts + liquidation)
+
+Runs the three new mechanics in isolation against a hand-built batch
+list. Prints r6_delivery_quality, r7_liquidation, and per-cohort
+retention so you can see the new reward signals are real.
+"""
+
+CELL_BLINKIT_SMOKE_CODE = """\
+# ============================================================
+# CELL 5e -- Blinkit-layer smoke (rider, cohorts, liquidation)
+# ============================================================
+
+import sys, os, random
+sys.path.insert(0, REPO_DIR)
+
+from dataclasses import dataclass
+from freshprice_env.engines.rider_pool_engine  import RiderPoolEngine
+from freshprice_env.engines.liquidation_engine import (
+    LiquidationEngine, LiquidationDecision,
+)
+from freshprice_env.agents.consumer_cohort_agent import ConsumerCohortAgent
+from freshprice_env.enums import BatchStatus, ExpiryUrgency
+
+@dataclass
+class _FakeBatch:
+    batch_id: str
+    category: str
+    urgency: ExpiryUrgency
+    hours_to_expiry: float
+    original_price: float
+    current_price: float
+    quantity_remaining: int
+    status: BatchStatus = BatchStatus.ACTIVE
+
+@dataclass
+class _FakeState:
+    batches: list
+
+print(\"--- 1. RiderPoolEngine ---\")
+rng = random.Random(0)
+rider = RiderPoolEngine(rider_count=2)
+batches = {f\"B{i}\": _FakeBatch(f\"B{i}\", \"dairy\", ExpiryUrgency.WATCH, 36.0, 80.0, 60.0, 10) for i in range(5)}
+events = rider.tick(current_tick=0, sales_this_tick={k: 1 for k in batches},
+                    batches_by_id=batches, rng=rng)
+for t in range(1, 6):
+    rider.tick(current_tick=t, sales_this_tick={}, batches_by_id=batches, rng=rng)
+snap = rider.snapshot()
+print(f\"  delivered={snap['orders_delivered']}  on_time={snap['orders_on_time']}  \"
+      f\"transit_spoiled={snap['transit_spoiled']}  avg_eta_min={snap['avg_eta_minutes']}\")
+print(f\"  saturation events triggered: {sum(1 for e in events if e.get('kind')=='rider_saturated')}\")
+print(f\"  r6_delivery_quality (this brief): {rider.compute_brief_reward():+.4f}\")
+
+print(\"\\n--- 2. ConsumerCohortAgent ---\")
+agent = ConsumerCohortAgent(rng=random.Random(0))
+# Stress test: lots of CRITICAL stock + slow ETA; premium walks, bargain stays.
+critical_batches = [
+    _FakeBatch(\"D1\", \"dairy\", ExpiryUrgency.CRITICAL, 4.0, 80.0, 40.0, 50),
+    _FakeBatch(\"F1\", \"fruits\", ExpiryUrgency.URGENT,   18.0, 100.0, 75.0, 40),
+    _FakeBatch(\"V1\", \"vegetables\", ExpiryUrgency.FRESH, 96.0, 30.0, 30.0, 80),
+]
+state = _FakeState(batches=critical_batches)
+boosts = agent.act(state, avg_eta_minutes=22.0)
+obs = agent.observe(state, avg_eta_minutes=22.0)
+for c in obs[\"cohorts\"]:
+    print(f\"  {c['name']:8s}  weight={c['weight']:.2f}  retention={c['retention_pct']:.0f}%  \"
+          f\"walked_away={c['walked_away_pct']:.1f}%\")
+print(f\"  per-batch demand boosts: {boosts}\")
+
+print(\"\\n--- 3. LiquidationEngine ---\")
+liq = LiquidationEngine()
+# B1 is CRITICAL (legitimate liquidation); B2 is FRESH (anti-hack flag).
+b1 = _FakeBatch(\"B1\", \"dairy\", ExpiryUrgency.CRITICAL, 2.0, 80.0, 35.0, 20)
+b2 = _FakeBatch(\"B2\", \"vegetables\", ExpiryUrgency.FRESH, 96.0, 30.0, 30.0, 50)
+results = liq.execute([
+    LiquidationDecision(\"B1\"),
+    LiquidationDecision(\"B2\"),
+], {\"B1\": b1, \"B2\": b2}, random.Random(0))
+for r in results:
+    flag = \"RECKLESS\" if r.reckless else (\"OK\" if r.accepted else \"REJECTED\")
+    print(f\"  {r.batch_id}: accepted={r.accepted} units={r.units_liquidated} \"
+          f\"recovered=Rs {r.rs_recovered:.0f}  [{flag}]  reason={r.reason}\")
+print(f\"  r7_liquidation (this brief): {liq.compute_brief_reward():+.4f}\")
+print(f\"  total recovered Rs across briefs: {liq.snapshot()['total_recovered_rs']}\")
+
+print(\"\\nBlinkit layer smoke PASSED.\")
+"""
+
+
+CELL_LONGHORIZON_SMOKE_MD = """\
+## Section 5f -- LongHorizon + Negotiation smoke
+
+Two more envs the project ships:
+
+  - LongHorizonFreshPriceEnv -- 30-day wrapper with AgentNotebook
+    (NOTE/RECALL/COMMIT/UPDATE_PLAN), sparse weekly reward, plan-
+    adherence component (r4).
+  - NegotiationEnv -- bilateral self-play used by training/self_play.py.
+
+Just runs reset + a couple of steps to confirm everything wired up.
+"""
+
+CELL_LONGHORIZON_SMOKE_CODE = """\
+# ============================================================
+# CELL 5f -- LongHorizon + Negotiation smoke
+# ============================================================
+
+import sys, os
+sys.path.insert(0, REPO_DIR)
+
+from freshprice_env.long_horizon_env import LongHorizonFreshPriceEnv
+from freshprice_env.negotiation_env  import NegotiationEnv
+from freshprice_env.enums import CurriculumScenario
+
+FALLBACK_BRIEF = '''## NOTEBOOK
+NOTE: Smoke-test brief; no real plan to commit.
+
+SITUATION: First brief of the long-horizon episode.
+SIGNAL ANALYSIS: N/A
+VIABILITY CHECK: N/A
+RECOMMENDATION: Observe one tick before issuing directives.
+DIRECTIVE:
+{\"engine\": \"PRICING\", \"actions\": []}
+CONFIDENCE: MEDIUM'''
+
+print(\"--- LongHorizonFreshPriceEnv (30-day) ---\")
+env = LongHorizonFreshPriceEnv(scenario=CurriculumScenario.STABLE_WEEK, seed=42)
+obs, info = env.reset()
+print(f\"  reset: obs_len={len(obs)} info_keys={sorted(info.keys())[:8]}\")
+total = 0.0
+for s in range(2):
+    obs, reward, done, truncated, info = env.step(FALLBACK_BRIEF)
+    total += float(reward)
+    print(f\"  step {s+1}: reward={float(reward):+.4f} \"
+          f\"plan_adherence_so_far={info.get('plan_adherence_so_far', 0):+.4f}\")
+print(f\"  cumulative reward over 2 briefs: {total:+.4f}\")
+
+print(\"\\n--- NegotiationEnv (bilateral self-play) ---\")
+env = NegotiationEnv(seed=42)
+obs, info = env.reset()
+print(f\"  reset: obs_len={len(obs)} info_keys={sorted(info.keys())[:6]}\")
+print(\"  (self-play is driven by training/self_play.py; this smoke just \"
+      \"confirms the env loads.)\")
+
+print(\"\\nLongHorizon + Negotiation smokes PASSED.\")
+"""
+
+
 CELL_USE_WEIGHTS_MD = """\
 ## Section 13 -- Use Your Trained Weights in the Dashboard
 
@@ -573,6 +888,56 @@ def main() -> None:
     insert_cell_after(nb, after_cell_id="cell-use-weights-md",
                       new_cell_id="cell-use-weights",
                       cell_type="code", source=CELL_USE_WEIGHTS_CODE)
+
+    # Showcase cells -- prove every env / agent / engine actually runs.
+    # Inserted after the existing env smoke cell, in source order.
+    insert_cell_after(nb, after_cell_id="cell-smoke-test",
+                      new_cell_id="cell-inventory-md",
+                      cell_type="markdown", source=CELL_INVENTORY_MD)
+    insert_cell_after(nb, after_cell_id="cell-inventory-md",
+                      new_cell_id="cell-inventory",
+                      cell_type="code", source=CELL_INVENTORY_CODE)
+    insert_cell_after(nb, after_cell_id="cell-inventory",
+                      new_cell_id="cell-commons-smoke-md",
+                      cell_type="markdown", source=CELL_COMMONS_SMOKE_MD)
+    insert_cell_after(nb, after_cell_id="cell-commons-smoke-md",
+                      new_cell_id="cell-commons-smoke",
+                      cell_type="code", source=CELL_COMMONS_SMOKE_CODE)
+    insert_cell_after(nb, after_cell_id="cell-commons-smoke",
+                      new_cell_id="cell-blinkit-smoke-md",
+                      cell_type="markdown", source=CELL_BLINKIT_SMOKE_MD)
+    insert_cell_after(nb, after_cell_id="cell-blinkit-smoke-md",
+                      new_cell_id="cell-blinkit-smoke",
+                      cell_type="code", source=CELL_BLINKIT_SMOKE_CODE)
+    insert_cell_after(nb, after_cell_id="cell-blinkit-smoke",
+                      new_cell_id="cell-longhorizon-smoke-md",
+                      cell_type="markdown", source=CELL_LONGHORIZON_SMOKE_MD)
+    insert_cell_after(nb, after_cell_id="cell-longhorizon-smoke-md",
+                      new_cell_id="cell-longhorizon-smoke",
+                      cell_type="code", source=CELL_LONGHORIZON_SMOKE_CODE)
+
+    # Extend GRPO rotation to cover all curriculum scenarios, not just
+    # STABLE_WEEK / FARMER_WEEK / TREND_WEEK. This way the trajectory
+    # buffer sees CRISIS_WEEK and REGULATORY_WEEK rollouts too.
+    GRPO_ROTATION_OLD = """ROTATION_LIST = [
+    CurriculumScenario.STABLE_WEEK,
+    CurriculumScenario.FARMER_WEEK,
+    CurriculumScenario.TREND_WEEK,
+]"""
+    GRPO_ROTATION_NEW = """ROTATION_LIST = [
+    CurriculumScenario.STABLE_WEEK,
+    CurriculumScenario.FARMER_WEEK,
+    CurriculumScenario.TREND_WEEK,
+    CurriculumScenario.CRISIS_WEEK,
+    CurriculumScenario.REGULATORY_WEEK,
+]"""
+    grpo_idx = find_cell_index(nb, "cell-grpo-rollouts")
+    grpo_src = "".join(nb["cells"][grpo_idx]["source"])
+    if GRPO_ROTATION_OLD in grpo_src:
+        grpo_src = grpo_src.replace(GRPO_ROTATION_OLD, GRPO_ROTATION_NEW)
+        nb["cells"][grpo_idx]["source"] = _split_lines(grpo_src)
+        nb["cells"][grpo_idx]["outputs"] = []
+        nb["cells"][grpo_idx]["execution_count"] = None
 
     rename_touched = replace_in_all_cells(nb, REPO_RENAME_REPLACEMENTS)
 
