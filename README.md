@@ -95,7 +95,14 @@ pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
 pip install -r requirements_training.txt
 ```
 
-### 2. Verify the environment
+### 2. Configure environment variables
+
+```bash
+cp .env.example .env
+# Edit .env and fill in your API_BASE_URL, MODEL_NAME, and HF_TOKEN
+```
+
+### 3. Verify the environment
 
 ```bash
 python -c "from freshprice_env.freshprice_env import FreshPriceEnv; import gymnasium; gymnasium.utils.env_checker.check_env(FreshPriceEnv())"

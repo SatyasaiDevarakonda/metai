@@ -633,6 +633,39 @@ class FreshPriceEnv(gym.Env):
         }
 
     # ------------------------------------------------------------------
+    # state (required by OpenEnv spec)
+    # ------------------------------------------------------------------
+
+    def state(self) -> dict:
+        """Return current environment state as a plain dict.
+
+        Required by the OpenEnv spec. Called by openenv validate and
+        by inference.py for structured logging.
+        """
+        if self._state is None:
+            return {"status": "not_started"}
+
+        active = [b for b in self._state.batches
+                  if b.status.value == "ACTIVE"]
+        critical = [b for b in active
+                    if b.urgency.value == "CRITICAL"]
+
+        return {
+            "tick": self._current_tick,
+            "day_of_week": self._state.day_of_week,
+            "hour_of_day": self._state.hour_of_day,
+            "scenario": self.scenario.name,
+            "wrr_so_far": self._state.wrr,
+            "active_batches": len(active),
+            "critical_batches": len(critical),
+            "pending_offers": len(self._state.pending_offers),
+            "active_trends": len(self._state.trend_signals),
+            "risk_buffer_balance": self._state.risk_buffer_balance,
+            "engine_type": self._last_engine_type.value if self._last_engine_type else "PRICING",
+            "episode_complete": self._current_tick >= TOTAL_TICKS,
+        }
+
+    # ------------------------------------------------------------------
     # render
     # ------------------------------------------------------------------
 
