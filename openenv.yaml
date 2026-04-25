@@ -1,32 +1,39 @@
 # QStorePrice — OpenEnv environment manifest (compatible with openenv-core
-# >= 0.2.0). The hackathon ships against OpenEnv v0.2.3 (PDF page 2).
-# Validated by `openenv push` and consumed by the Hugging Face Space build.
+# >= 0.2.0). Hackathon target: openenv-core v0.2.3.
+#
+# This manifest now exposes a *family* of related envs under one project:
+#
+#   gym_environment        — single-store FreshPriceEnv (legacy, training)
+#   long_horizon_env       — 30-day sparse-reward + AgentNotebook
+#   market_commons_env     — 6+1 multi-agent ecosystem with bus + auditor
+#   negotiation_env        — bilateral self-play arena
+#   multi_store_env        — cooperative N-store transfers
+#
+# The OpenEnv contract is satisfied by `freshprice_env.openenv_adapter:FreshPriceOpenEnv`
+# (single-store) — the multi-agent envs run in-process and surface their state
+# via /commons/* admin endpoints + a WebSocket on /commons/ws.
 
 name: qstoreprice
-version: "1.1.0"
+version: "2.0.0"
 description: >
-  Perishable goods intelligence environment. An LLM writes structured
-  Operating Briefs every 2 simulated hours; a deterministic rule executor
-  converts the DIRECTIVE section into typed pricing/farmer/trend actions.
-  Episodes are 7 simulated days (672 ticks at 15-minute resolution).
-  Unified metric: Weekly Waste Recovery Rate (WRR) = revenue recovered
-  from at-risk inventory / cost of at-risk inventory.
+  Multi-agent perishable goods ecosystem. A hero StoreAgent (LLM under
+  training) negotiates with farmer agents, competes with rival stores,
+  reads regulator policy drift, and is watched by an Oversight Auditor —
+  all over a 30-day horizon with a durable AgentNotebook for long-horizon
+  planning. Targets Theme #1 (multi-agent), Theme #2 (long-horizon), and
+  bonus sub-prizes from Fleet AI (oversight), Halluminate (multi-actor),
+  Patronus (schema drift), and Mercor (token-scaled reward).
 
 author: "QStorePrice Team"
 license: MIT
 homepage: "https://github.com/nandeshkanagaraju/QStorePrice"
 
-# OpenEnv server: FastAPI app produced by core.env_server.create_fastapi_app.
-# Endpoints exposed: GET /health, POST /reset, POST /step, GET /state, WS /ws,
-# GET /docs, GET /web (PDF page 41).
 type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
 
-# Typed action / observation / state classes (PDF page 28 "Type-Safe by
-# Design"). These are re-exported at top-level by ``models.py`` so clients
-# import them via ``from models import BriefAction, ...``.
+# Typed action / observation / state classes.
 environment:
   class: freshprice_env.openenv_adapter.FreshPriceOpenEnv
   entry_point: freshprice_env.openenv_adapter:FreshPriceOpenEnv
@@ -35,78 +42,126 @@ environment:
   state_class: models:FreshPriceState
   client_class: client:QStorePriceEnv
 
-# The legacy gym-style env is still available for in-process training loops
-# (training/train.py, eval/evaluator.py); the OpenEnv adapter delegates to it.
+# Legacy gym env (training/eval tooling)
 gym_environment:
   class: freshprice_env.freshprice_env.FreshPriceEnv
   entry_point: freshprice_env.freshprice_env:FreshPriceEnv
+
+# Headline multi-agent / long-horizon envs (theme #1 + #2)
+extended_environments:
+  - name: market_commons
+    class: freshprice_env.market_commons_env.MarketCommonsEnv
+    description: >
+      Hero StoreAgent + N CompetitorStoreAgents + persistent FarmerAgent
+      pool + RegulatorAgent + MarketBus + (optional) OversightAuditor.
+      Information is partial: farmer reserves, competitor cash, paid-promo
+      flags are private. Cooperation Index is a first-class metric.
+  - name: long_horizon_30day
+    class: freshprice_env.long_horizon_env.LongHorizonFreshPriceEnv
+    description: >
+      30 simulated days = 360 briefs. Sparse weekly reward. AgentNotebook
+      with NOTE/RECALL/COMMIT/UPDATE_PLAN — prompt is forcibly truncated
+      to make externalised memory the only viable strategy. Plan-adherence
+      reward (r4) is computed from auto-resolving commitments.
+  - name: negotiation
+    class: freshprice_env.negotiation_env.NegotiationEnv
+    description: >
+      Bilateral price haggle, MAX_ROUNDS=4. Used by training/self_play.py
+      for self-play against frozen older checkpoints (Theme #4).
+  - name: multi_store
+    class: freshprice_env.multi_store_env.MultiStoreFreshPriceEnv
+    description: >
+      Cooperative N-store env with TRANSFER directives. Cooperation
+      bonuses are paid when transfers raise collective WRR.
 
 observation_space:
   type: text
   max_length: 16384
   description: >
-    Structured prompt string describing inventory state, expiry urgency,
-    active farmer offers, active trend signals, and task instructions.
+    Structured prompt with NOTEBOOK + MARKET COMMONS + RECENT MESSAGES
+    + inventory state + active schemas + task instructions.
 
 action_space:
   type: text
   max_length: 4096
   description: >
-    Raw Operating Brief text with 6 sections — SITUATION, SIGNAL ANALYSIS,
-    VIABILITY CHECK, RECOMMENDATION, DIRECTIVE (JSON), CONFIDENCE.
+    Operating Brief with optional ## NOTEBOOK and ## MESSAGES sections,
+    plus the canonical 6 sections (SITUATION/SIGNAL/VIABILITY/RECOMMENDATION/
+    DIRECTIVE/CONFIDENCE). DIRECTIVE schema is version-aware and may be
+    rewritten mid-episode by the RegulatorAgent.
 
-# Reward is a per-brief delta of WRR with rich component breakdown (r1, r2,
-# r3) plus a brief-quality scorer that is independent of WRR. This satisfies
-# the hackathon "rich, informative signal" guideline (PDF page 14).
 reward:
   type: float
-  range: [-inf, 1.0]
+  range: [-inf, 1.5]
   rubric:
     - name: r1_pricing
       description: Pricing engine reward — discount timing vs expiry urgency
-      weight: 0.5
+      weight: 0.40
     - name: r2_farmer
-      description: Farmer offer reward — viability-aware accept/counter/decline
-      weight: 0.3
+      description: Farmer offer reward — viability + reputation aware
+      weight: 0.20
     - name: r3_trend
-      description: Trend engine reward — restock decisions on viral signals
-      weight: 0.2
+      description: Trend reward — restock decisions; penalises paid-promo gullibility
+      weight: 0.15
+    - name: r4_plan_adherence
+      description: Honored notebook commitments minus broken commitments
+      weight: 0.15
+    - name: r5_reasoning_tokens
+      description: Capped, quality-gated token-scaled reward (Mercor sub-prize)
+      weight: 0.10
+    - name: cooperation_index
+      description: Pareto-improving exchanges in MarketCommonsEnv
+      weight: 0.0   # informational, not added to scalar
     - name: brief_quality
-      description: Independent scorer of brief reasoning quality (anti-gaming)
-      weight: 0.0  # informational only; does not enter WRR
+      description: Independent brief quality score (anti-gaming)
+      weight: 0.0
+    - name: oversight_trust_score
+      description: OversightAuditor's score (informational; gates DPO eligibility)
+      weight: 0.0
   description: >
-    Per-brief reward is the WRR delta this cycle. Episode reward is the
-    final WRR from the accumulator. Component rewards (r1/r2/r3) are
-    composable rubrics — see freshprice_env/reward.py.
+    Per-brief reward composes r1+r2+r3+r4+r5 plus a separate cooperation
+    index for multi-agent runs. WRR remains the headline outcome.
 
 engines:
-  - name: Dynamic Pricing
-    description: Auto-discount items as expiry approaches
-    reward_component: r1_pricing
-  - name: Farmer Offer Engine
-    description: Accept/counter/decline farmer offers with risk management
-    reward_component: r2_farmer
-  - name: Social Trend Engine
-    description: Detect viral signals, restock before demand arrives
-    reward_component: r3_trend
+  - {name: Dynamic Pricing,    description: Auto-discount items as expiry approaches, reward_component: r1_pricing}
+  - {name: Farmer Offer Engine, description: Accept/counter/decline farmer offers, reward_component: r2_farmer}
+  - {name: Social Trend Engine, description: Detect viral signals, restock before demand arrives, reward_component: r3_trend}
 
 curriculum:
-  levels: 5
+  levels: 6
   scenarios:
     - STABLE_WEEK
     - BUSY_WEEKEND
     - FARMER_WEEK
     - TREND_WEEK
     - CRISIS_WEEK
+    - REGULATORY_WEEK    # Patronus-style schema drift
   promotion_threshold: 0.70
   promotion_window: 5
+  adaptive_curriculum: scenario_composer    # see freshprice_env/scenario_composer.py
+
+extras:
+  features:
+    - persistent_farmer_reputation: SQLite-backed reputation graph (survives reset)
+    - agent_notebook: durable scratchpad for long-horizon planning
+    - market_bus: typed inter-agent message protocol (CHAT/BID/COUNTER/COMMIT/REVEAL/BLUFF/BROADCAST/AUDIT)
+    - oversight_auditor: 7th LLM that audits trajectories (Fleet AI sub-prize)
+    - regulator: mid-episode directive schema drift (Patronus AI sub-prize)
+    - influencer_disinfo: paid-promotion trend signals with hidden veracity
+    - self_play_negotiation: rotating frozen-opponent negotiation arena
+    - scenario_composer: Thompson-sampling adaptive curriculum
+    - counterfactual_replay: swap-one-decision, re-run-K-ticks tool
+    - tom_probe: theory-of-mind held-out evaluation
+    - live_dashboard: WebSocket-streamed multi-pane multi-agent UI
 
 tags:
   - perishable-goods
   - quick-commerce
   - multi-engine
-  - operating-brief
-  - curriculum-learning
-  - wrr
+  - multi-agent
+  - long-horizon
+  - oversight
+  - schema-drift
+  - self-play
   - openenv
   - llm-agent

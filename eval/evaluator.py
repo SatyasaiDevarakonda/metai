@@ -44,6 +44,12 @@ class EvalReport:
     summary: dict
 
 
+# Minimum sample size before reporting std-dev with ± error bars.
+# Below this threshold std is computed but the printer omits the ± to
+# avoid false rigor (a std from n=2 is meaningless).
+_MIN_N_FOR_STD: int = 5
+
+
 class Evaluator:
     """Runs held-out evaluation episodes with greedy decoding."""
 
@@ -220,15 +226,23 @@ class Evaluator:
             mean_wrr = sum(wrrs) / len(wrrs) if wrrs else 0.0
             std_wrr = _std(wrrs)
 
+            n_eps = len(episodes)
             by_scenario[scenario_name] = {
                 "wrr_mean": round(mean_wrr, 4),
                 "wrr_std": round(std_wrr, 4),
+                # Sample size is preserved so the printer / consumers can
+                # decide whether ± is meaningful (n>=5).
+                "n": n_eps,
+                "std_meaningful": n_eps >= _MIN_N_FOR_STD,
                 "wrr_min": round(min(wrrs), 4) if wrrs else 0.0,
                 "wrr_max": round(max(wrrs), 4) if wrrs else 0.0,
                 "quality_mean": round(sum(qualities) / len(qualities), 4) if qualities else 0.0,
                 "quality_std": round(_std(qualities), 4),
                 "violations_mean": round(sum(violations) / len(violations), 2) if violations else 0.0,
                 "constitutional_pass_rate": f"{const_passed}/{len(episodes)}",
+                "constitutional_pass_fraction": (
+                    round(const_passed / n_eps, 3) if n_eps else 0.0
+                ),
             }
 
             all_wrrs.extend(wrrs)
@@ -266,9 +280,22 @@ class Evaluator:
             episodes = report.results.get(scenario_name, [])
             n = len(episodes)
             print(f"\n-- {scenario_name} ({n} episodes) --")
-            print(f"  WRR:           {stats['wrr_mean']:.4f} +/- {stats['wrr_std']:.4f}  "
-                  f"[{stats['wrr_min']:.4f} -> {stats['wrr_max']:.4f}]")
-            print(f"  Brief Quality: {stats['quality_mean']:.4f} +/- {stats['quality_std']:.4f}")
+            # Suppress ± when sample is too small (n<5). Reporting std on
+            # 2 samples implied false rigor; now the printer prints "(std
+            # not meaningful at n=N)" instead of a misleading ±.
+            if stats.get("std_meaningful", n >= _MIN_N_FOR_STD):
+                print(
+                    f"  WRR:           {stats['wrr_mean']:.4f} +/- {stats['wrr_std']:.4f}  "
+                    f"[{stats['wrr_min']:.4f} -> {stats['wrr_max']:.4f}]"
+                )
+                print(f"  Brief Quality: {stats['quality_mean']:.4f} +/- {stats['quality_std']:.4f}")
+            else:
+                print(
+                    f"  WRR:           {stats['wrr_mean']:.4f}  "
+                    f"[{stats['wrr_min']:.4f} -> {stats['wrr_max']:.4f}]  "
+                    f"(std not meaningful at n={n}; need n>={_MIN_N_FOR_STD})"
+                )
+                print(f"  Brief Quality: {stats['quality_mean']:.4f}")
             print(f"  Violations:    {stats['violations_mean']:.1f} per episode")
             print(f"  Constitutional Pass Rate: {stats['constitutional_pass_rate']}")
 

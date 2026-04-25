@@ -3,12 +3,18 @@
 A brief can parse successfully but still be invalid for business reasons.
 Errors → brief rejected, last valid directive used.
 Warnings → brief proceeds, issues logged for analysis.
+
+Additionally, the *active schema version* is consulted via
+``schema_registry.default_registry()``. The RegulatorAgent mutates that
+registry mid-episode. A brief written against an outdated schema (e.g.
+``price_multiplier`` after a v3 cap-and-rename event) fails validation.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from freshprice_env.brief_pipeline.schema_registry import default_registry
 from freshprice_env.constants import (
     ANTIHACK_RECKLESS_ACCEPT_VIABILITY_MAX,
     ANTIHACK_TREND_ORDER_VELOCITY_MULTIPLIER,
@@ -61,12 +67,34 @@ class BriefValidator:
             state: Current market state.
         """
         engine_type = brief["engine_type"]
+
+        # Schema-drift check first: the active schema version may have
+        # been mutated by the RegulatorAgent. Briefs that don't match
+        # the new schema fail before business validation runs.
+        registry = default_registry()
+        directive = brief.get("directive") or {}
+        schema_ok, schema_errors = registry.validate(directive, engine_type)
+
         validators = {
             BriefEngineType.PRICING: BriefValidator._validate_pricing,
             BriefEngineType.FARMER: BriefValidator._validate_farmer,
             BriefEngineType.TREND: BriefValidator._validate_trend,
         }
-        return validators[engine_type](brief, state)
+        biz_result = validators[engine_type](brief, state)
+
+        # Merge schema errors as the highest-priority failure surface
+        merged_errors = list(schema_errors) + list(biz_result.errors)
+        active_v = registry.active_version(engine_type)
+        if not schema_ok:
+            biz_result.warnings.append(
+                f"directive must conform to active schema "
+                f"{engine_type.value} {active_v}"
+            )
+        return ValidationResult(
+            valid=schema_ok and biz_result.valid,
+            warnings=biz_result.warnings,
+            errors=merged_errors,
+        )
 
     # ------------------------------------------------------------------
     # PRICING validation

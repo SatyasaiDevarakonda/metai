@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QStorePrice Commons — Live multi-agent dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/v2/styles.css">
+</head>
+<body>
+<div class="ambient"></div>
+
+<header class="topbar">
+    <div class="brand">
+        <span class="dot"></span>
+        <h1>QStorePrice <span>Commons</span></h1>
+        <span class="tagline">6+1 multi-agent ecosystem · 30-day horizon · live</span>
+    </div>
+    <div class="status">
+        <span id="ws-dot" class="pulse"></span>
+        <span id="ws-text">Connecting...</span>
+        <span class="sep">|</span>
+        <span id="episode-id">no episode</span>
+        <span class="sep">|</span>
+        <span id="scenario-name">--</span>
+        <span class="sep">|</span>
+        <span id="tick-counter">tick 0</span>
+    </div>
+</header>
+
+<main>
+
+<!-- ╭──── KPIs ────────────────────────────────────────────────────╮ -->
+<section class="kpi-row">
+    <div class="kpi card">
+        <div class="kpi-label">WRR</div>
+        <div id="kpi-wrr" class="kpi-value">0.00</div>
+        <div class="kpi-sub">Weekly waste recovery</div>
+    </div>
+    <div class="kpi card">
+        <div class="kpi-label">Cooperation Index</div>
+        <div id="kpi-coop" class="kpi-value">0.00</div>
+        <div class="kpi-sub">pareto-improving exchanges</div>
+    </div>
+    <div class="kpi card">
+        <div class="kpi-label">Plan Adherence</div>
+        <div id="kpi-adherence" class="kpi-value">0.00</div>
+        <div class="kpi-sub">notebook commitments honored</div>
+    </div>
+    <div class="kpi card">
+        <div class="kpi-label">Auditor Trust</div>
+        <div id="kpi-trust" class="kpi-value">--</div>
+        <div class="kpi-sub" id="kpi-trust-rec">no audit yet</div>
+    </div>
+    <div class="kpi card">
+        <div class="kpi-label">Pool Trust</div>
+        <div id="kpi-pool-trust" class="kpi-value">0.60</div>
+        <div class="kpi-sub" id="kpi-pool-meta">--</div>
+    </div>
+    <div class="kpi card">
+        <div class="kpi-label">Active Schemas</div>
+        <div id="kpi-schemas" class="kpi-value mono small">v1·v1·v1</div>
+        <div class="kpi-sub">PRICING · FARMER · TREND</div>
+    </div>
+</section>
+
+<!-- ╭──── 6+1 agent panes ──────────────────────────────────────────╮ -->
+<section class="panes">
+    <h2>Live agent traffic</h2>
+    <div class="pane-grid">
+        <div class="pane card" data-actor="store_001">
+            <header><span class="pane-title">StoreAgent</span><span class="pane-badge">hero</span></header>
+            <div class="pane-stream" data-actor-stream="store_001"></div>
+        </div>
+        <div class="pane card" data-actor="store_002">
+            <header><span class="pane-title">CompetitorStore</span><span class="pane-badge alt">competitor</span></header>
+            <div class="pane-stream" data-actor-stream="store_002"></div>
+        </div>
+        <div class="pane card farmer" data-actor="farmer">
+            <header><span class="pane-title">Farmer Pool</span><span class="pane-badge">5 farmers</span></header>
+            <div class="pane-stream" data-actor-stream="farmer"></div>
+        </div>
+        <div class="pane card consumer" data-actor="consumer">
+            <header><span class="pane-title">Consumer Cohorts</span><span class="pane-badge">3 personas</span></header>
+            <div class="pane-stream" data-actor-stream="consumer"></div>
+        </div>
+        <div class="pane card influencer" data-actor="influencer">
+            <header><span class="pane-title">Influencer / Trends</span><span class="pane-badge warn">disinfo possible</span></header>
+            <div class="pane-stream" data-actor-stream="influencer"></div>
+        </div>
+        <div class="pane card regulator" data-actor="regulator">
+            <header><span class="pane-title">Regulator</span><span class="pane-badge danger">policy drift</span></header>
+            <div class="pane-stream" data-actor-stream="regulator"></div>
+        </div>
+        <div class="pane card auditor" data-actor="oversight">
+            <header><span class="pane-title">Oversight Auditor</span><span class="pane-badge audit">7th agent</span></header>
+            <div class="pane-stream" data-actor-stream="oversight"></div>
+        </div>
+    </div>
+</section>
+
+<!-- ╭──── Audit narrative ─────────────────────────────────────────╮ -->
+<section class="card panel audit-panel">
+    <h2>Latest oversight audit</h2>
+    <div id="audit-content">
+        <p class="empty">No audit produced yet. Run an episode in MarketCommonsEnv with the auditor to populate.</p>
+    </div>
+</section>
+
+<!-- ╭──── Notebook + commitments ──────────────────────────────────╮ -->
+<section class="card panel">
+    <h2>StoreAgent notebook (durable memory)</h2>
+    <div id="notebook-content">
+        <p class="empty">No notebook snapshot yet.</p>
+    </div>
+</section>
+
+<!-- ╭──── Live demo runner (drive Theater with the trained agent) ───╮ -->
+<section class="card panel agent-runner">
+    <h2>Run live demo <span class="tagline">trained agent &rarr; theater</span></h2>
+    <p class="hint">Pick a scenario and click <strong>Run live demo</strong> to drive the simulation with whichever
+    agent runtime the server loaded (local checkpoint, HF Inference API, or the scripted fallback). Each step
+    publishes a tick frame the Theater below will play back automatically.</p>
+    <div class="agent-runner-row">
+        <label>Agent runtime:
+            <span id="agent-info-badge" class="mono small">checking...</span>
+        </label>
+        <label>Scenario:
+            <select id="agent-scenario">
+                <option value="STABLE_WEEK">STABLE_WEEK</option>
+                <option value="FARMER_WEEK">FARMER_WEEK</option>
+                <option value="TREND_WEEK">TREND_WEEK</option>
+                <option value="CRISIS_WEEK">CRISIS_WEEK</option>
+            </select>
+        </label>
+        <label>Briefs:
+            <input id="agent-max-briefs" type="number" min="1" max="84" value="8" style="width:62px;">
+        </label>
+        <label>Seed:
+            <input id="agent-seed" type="number" min="0" value="42" style="width:80px;">
+        </label>
+        <button id="agent-run-btn" type="button">Run live demo</button>
+        <span id="agent-run-status" class="mono small"></span>
+    </div>
+</section>
+
+<!-- ╭──── Simulation Theater (Blinkit/Zepto layer) ────────────────╮ -->
+<section class="card panel theater-panel">
+    <h2>Simulation Theater <span class="tagline">Blinkit-style live store</span></h2>
+    <p class="hint">Replay the recorded simulation frame-by-frame. Speed-control runs the player at 1x, 4x or 16x;
+    the reasoning column streams the StoreAgent's brief sections in sync. The rider gauge, cohort retention bars,
+    and liquidation queue update with each frame.</p>
+
+    <div class="theater-controls">
+        <button id="theater-play" type="button">▶ Play</button>
+        <button id="theater-pause" type="button" disabled>⏸ Pause</button>
+        <label>Speed:
+            <select id="theater-speed">
+                <option value="1">1x</option>
+                <option value="4" selected>4x</option>
+                <option value="16">16x</option>
+            </select>
+        </label>
+        <input type="range" id="theater-frame-slider" min="0" max="0" value="0">
+        <span id="theater-frame-label">frame 0 / 0</span>
+    </div>
+
+    <div class="theater-grid">
+        <!-- LEFT: dark-store batch grid + rider gauge -->
+        <div class="theater-store">
+            <div class="theater-store-header">
+                <span>Dark store inventory</span>
+                <span id="theater-tick-label" class="mono small">tick 0</span>
+            </div>
+            <div id="theater-batches" class="theater-batches"></div>
+            <div class="theater-rider-row">
+                <div class="rider-gauge">
+                    <span class="rider-gauge-label">Rider pool</span>
+                    <div class="rider-gauge-bar"><div id="rider-gauge-fill"></div></div>
+                    <span id="rider-gauge-text" class="mono small">0 / 6 busy</span>
+                </div>
+                <div class="rider-eta">
+                    <span class="rider-eta-label">avg ETA</span>
+                    <span id="rider-eta-value" class="mono">--</span>
+                </div>
+                <div class="rider-spoil">
+                    <span class="rider-spoil-label">transit-spoiled</span>
+                    <span id="rider-spoil-value" class="mono">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- MIDDLE: cohort retention -->
+        <div class="theater-cohorts">
+            <div class="theater-store-header"><span>Consumer cohorts</span></div>
+            <div id="theater-cohort-bars"></div>
+            <div class="liquidation-block">
+                <div class="theater-store-header"><span>Liquidation queue</span></div>
+                <div id="theater-liquidation"></div>
+            </div>
+        </div>
+
+        <!-- RIGHT: reasoning stream -->
+        <div class="theater-reasoning">
+            <div class="theater-store-header"><span>StoreAgent reasoning stream</span></div>
+            <pre id="theater-reasoning-text" class="reasoning-text"></pre>
+            <button id="theater-whatif" type="button" disabled>Run "what-if" on this directive</button>
+        </div>
+    </div>
+</section>
+
+<!-- ╭──── Counterfactual replay ───────────────────────────────────╮ -->
+<section class="card panel replay-panel">
+    <h2>Counterfactual replay</h2>
+    <p class="hint">Drag the slider to a brief index, then click "Run fork" to see how
+    swapping that single decision would have changed WRR over the next 24 hours.</p>
+    <div class="replay-controls">
+        <input type="range" id="replay-slider" min="0" max="83" value="14">
+        <span id="replay-tick-label">brief 14</span>
+        <button id="replay-run" type="button" disabled>Run fork (load brief log first)</button>
+    </div>
+    <div id="replay-result" class="replay-result">no fork run yet</div>
+</section>
+
+<!-- ╭──── Bus log ─────────────────────────────────────────────────╮ -->
+<section class="card panel bus-log">
+    <h2>Message bus (full log)</h2>
+    <div id="bus-log-table"></div>
+</section>
+
+<!-- ╭──── Scenario composer ───────────────────────────────────────╮ -->
+<section class="card panel">
+    <h2>Adaptive curriculum (ScenarioComposer)</h2>
+    <div id="composer-content">
+        <p class="empty">Composer hardness posteriors will appear here once scenarios are recorded.</p>
+    </div>
+</section>
+
+</main>
+
+<footer class="foot">
+    <span>Theme #1 · Theme #2 · sub-prizes: Fleet AI · Halluminate · Patronus · Mercor</span>
+    <span>·</span>
+    <a href="/docs">/docs</a>
+    <span>·</span>
+    <a href="/legacy">legacy dashboard</a>
+    <span>·</span>
+    <a href="/commons/snapshot">raw snapshot</a>
+</footer>
+
+<script src="/static/v2/app.js"></script>
+</body>
+</html>

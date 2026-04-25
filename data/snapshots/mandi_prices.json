@@ -1,0 +1,23 @@
+{
+  "$schema": "qstoreprice.snapshot.v1",
+  "source": "Bangalore HOPCOMS / KMF mandi listings — week of 2026-04-21",
+  "license": "publicly listed wholesale prices, summarised for demo seed",
+  "currency": "INR_per_kg",
+  "rows": [
+    {"date": "2026-04-21", "category": "fruits",       "product": "mango_alphonso",  "min": 110, "modal": 145, "max": 180},
+    {"date": "2026-04-21", "category": "fruits",       "product": "banana_robusta",  "min": 32,  "modal": 38,  "max": 46},
+    {"date": "2026-04-21", "category": "fruits",       "product": "watermelon",      "min": 12,  "modal": 18,  "max": 24},
+    {"date": "2026-04-21", "category": "vegetables",   "product": "tomato",          "min": 18,  "modal": 24,  "max": 32},
+    {"date": "2026-04-21", "category": "vegetables",   "product": "capsicum",        "min": 38,  "modal": 48,  "max": 64},
+    {"date": "2026-04-21", "category": "vegetables",   "product": "spinach_palak",   "min": 14,  "modal": 18,  "max": 24},
+    {"date": "2026-04-22", "category": "vegetables",   "product": "tomato",          "min": 16,  "modal": 22,  "max": 30},
+    {"date": "2026-04-22", "category": "leafy_greens", "product": "coriander",       "min": 28,  "modal": 35,  "max": 50},
+    {"date": "2026-04-22", "category": "leafy_greens", "product": "mint",            "min": 32,  "modal": 40,  "max": 55},
+    {"date": "2026-04-23", "category": "dairy",        "product": "curd_500g",       "min": 38,  "modal": 45,  "max": 55},
+    {"date": "2026-04-23", "category": "dairy",        "product": "paneer_200g",     "min": 75,  "modal": 88,  "max": 110},
+    {"date": "2026-04-24", "category": "mushrooms",    "product": "button_mushroom", "min": 110, "modal": 140, "max": 180},
+    {"date": "2026-04-25", "category": "fruits",       "product": "papaya",          "min": 22,  "modal": 28,  "max": 36},
+    {"date": "2026-04-25", "category": "vegetables",   "product": "okra_bhindi",     "min": 28,  "modal": 38,  "max": 50},
+    {"date": "2026-04-26", "category": "herbs",        "product": "curry_leaves",    "min": 80,  "modal": 110, "max": 140}
+  ]
+}

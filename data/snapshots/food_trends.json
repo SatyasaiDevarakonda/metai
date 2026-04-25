@@ -1,0 +1,15 @@
+{
+  "$schema": "qstoreprice.snapshot.v1",
+  "source": "Composite from publicly visible #foodtrend posts on X (formerly Twitter), week of 2026-04-21",
+  "license": "summary for demo only — do not redistribute raw posts",
+  "rows": [
+    {"date": "2026-04-21", "tag": "#mango_lassi_summer",    "category": "dairy",        "is_paid_promotion": false, "view_velocity": 0.82, "co_purchase_uptick": 0.71},
+    {"date": "2026-04-22", "tag": "#mushroom_galouti",      "category": "mushrooms",    "is_paid_promotion": true,  "view_velocity": 0.94, "co_purchase_uptick": 0.21, "promotion_brand": "GoldenHarvest"},
+    {"date": "2026-04-22", "tag": "#paneer_butter_masala",  "category": "dairy",        "is_paid_promotion": false, "view_velocity": 0.66, "co_purchase_uptick": 0.55},
+    {"date": "2026-04-23", "tag": "#palak_paneer_recipe",   "category": "leafy_greens", "is_paid_promotion": false, "view_velocity": 0.78, "co_purchase_uptick": 0.62},
+    {"date": "2026-04-23", "tag": "#capsicum_korean",       "category": "vegetables",   "is_paid_promotion": true,  "view_velocity": 0.88, "co_purchase_uptick": 0.18, "promotion_brand": "FarmFresh"},
+    {"date": "2026-04-24", "tag": "#raw_mango_pickle",      "category": "fruits",       "is_paid_promotion": false, "view_velocity": 0.74, "co_purchase_uptick": 0.59},
+    {"date": "2026-04-25", "tag": "#bhindi_fry",            "category": "vegetables",   "is_paid_promotion": false, "view_velocity": 0.61, "co_purchase_uptick": 0.48},
+    {"date": "2026-04-26", "tag": "#curry_leaves_oil",      "category": "herbs",        "is_paid_promotion": true,  "view_velocity": 0.91, "co_purchase_uptick": 0.15, "promotion_brand": "DesiKitchen"}
+  ]
+}

@@ -22,10 +22,13 @@ from freshprice_env.brief_pipeline.rule_executor import RuleExecutor
 from freshprice_env.brief_pipeline.validator import BriefValidator
 from freshprice_env.constants import (
     MAX_ACTIVE_FARMER_OFFERS,
+    PARSE_FAIL_FLAG_THRESHOLD,
+    PARSE_FAIL_REWARD_PENALTY,
     TICKS_PER_BRIEF,
     TICKS_PER_DAY,
     TOTAL_TICKS,
     TREND_SCORE_THRESHOLD,
+    VALIDATION_FAIL_REWARD_PENALTY,
 )
 from freshprice_env.engines.farmer_engine import FarmerEngine
 from freshprice_env.engines.pricing_engine import PricingEngine
@@ -342,8 +345,34 @@ class FreshPriceEnv(gym.Env):
         # 6. COMPUTE reward for this brief cycle
         # ----------------------------------------------------------
         current_wrr = self._state.wrr
-        reward = current_wrr - self._previous_wrr
+        wrr_delta = current_wrr - self._previous_wrr
         self._previous_wrr = current_wrr
+
+        # Closes a reward-leak surface: a brief that fails to parse still
+        # used to earn positive reward from natural sales over the next 8
+        # ticks. We now subtract a fixed penalty AND record an anti-hack
+        # violation when parse-fail combines with positive reward — that
+        # combination is exactly what an exploit looks like.
+        reward = float(wrr_delta)
+        if not info["parse_success"]:
+            reward -= PARSE_FAIL_REWARD_PENALTY
+            if wrr_delta > PARSE_FAIL_FLAG_THRESHOLD:
+                self._reward_engine.record_antihack_violation(
+                    self._current_tick, "PIPELINE", "PARSE_FAIL_POSITIVE_REWARD",
+                    f"wrr_delta=+{wrr_delta:.4f} despite parse failure",
+                )
+                info.setdefault("execution_warnings", []).append(
+                    f"parse_fail with positive WRR delta {wrr_delta:+.4f} "
+                    "flagged as anti-hack (PARSE_FAIL_POSITIVE_REWARD)"
+                )
+        elif not info["validation_success"]:
+            reward -= VALIDATION_FAIL_REWARD_PENALTY
+        info["wrr_delta"] = round(float(wrr_delta), 4)
+        info["parse_fail_penalty_applied"] = (
+            PARSE_FAIL_REWARD_PENALTY if not info["parse_success"]
+            else (VALIDATION_FAIL_REWARD_PENALTY
+                  if not info["validation_success"] else 0.0)
+        )
 
         # ----------------------------------------------------------
         # 7. CHECK termination

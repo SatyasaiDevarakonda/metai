@@ -43,6 +43,34 @@ class DPOPair:
     scenario: str
 
 
+# Default minimum buffer size before DPO is worth running. Lowered from
+# the legacy 4 to 2 so short Kaggle runs (3-4 episodes) actually train
+# DPO. Tunable via the constructor or run_dpo() callsite.
+DEFAULT_DPO_MIN_BUFFER: int = 2
+
+
+@dataclass
+class DPOReadiness:
+    """Why DPO can / cannot run right now — used by the report summary."""
+
+    can_run: bool
+    buffer_size: int
+    min_required: int
+    pairs_available: int
+    engine_coverage: dict[str, int]
+    reason: str
+
+    def to_dict(self) -> dict:
+        return {
+            "dpo_can_run": self.can_run,
+            "buffer_size": self.buffer_size,
+            "min_required": self.min_required,
+            "pairs_available": self.pairs_available,
+            "engine_coverage": self.engine_coverage,
+            "reason": self.reason,
+        }
+
+
 class TrajectoryBuffer:
     """Buffer of top episode trajectories for DPO pair generation."""
 
@@ -92,6 +120,45 @@ class TrajectoryBuffer:
         count = n if n is not None else self.top_n_for_dpo
         sorted_buf = sorted(self._buffer, key=lambda t: t.wrr, reverse=True)
         return sorted_buf[:count]
+
+    def dpo_readiness(self, min_buffer: int = DEFAULT_DPO_MIN_BUFFER) -> DPOReadiness:
+        """Honest answer to "can DPO actually run?".
+
+        The Kaggle notebook used to print ``DPO enabled : True`` even
+        when DPO had been skipped because the buffer was too small.
+        Use this method in the summary cell instead — the resulting
+        flag is *what actually happened*, not a config value.
+
+        ``engine_coverage`` is the number of trajectories per engine
+        type so the caller can warn when DPO would only update
+        PRICING behaviour.
+        """
+        coverage: dict[str, int] = {"PRICING": 0, "FARMER": 0, "TREND": 0}
+        for traj in self._buffer:
+            engines_in_traj: set[str] = set()
+            for brief in traj.briefs:
+                e = brief.get("engine_type", "PRICING")
+                engines_in_traj.add(e)
+            for e in engines_in_traj:
+                coverage[e] = coverage.get(e, 0) + 1
+        size = len(self._buffer)
+        # Estimate pairs without actually generating them
+        pairs_est = sum(len(t.briefs) for t in self.get_top_n())
+        if size < min_buffer:
+            return DPOReadiness(
+                can_run=False, buffer_size=size, min_required=min_buffer,
+                pairs_available=0, engine_coverage=coverage,
+                reason=f"buffer has {size} clean episode(s); need >= {min_buffer}",
+            )
+        return DPOReadiness(
+            can_run=True, buffer_size=size, min_required=min_buffer,
+            pairs_available=pairs_est, engine_coverage=coverage,
+            reason=(
+                f"ready: {size} clean trajectories, ~{pairs_est} pairs"
+                if any(v > 0 for v in coverage.values()) else
+                "ready but no engine coverage recorded"
+            ),
+        )
 
     # ------------------------------------------------------------------
     # DPO pair generation

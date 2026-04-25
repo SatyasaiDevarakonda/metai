@@ -1,0 +1,35 @@
+{
+  "$schema": "qstoreprice.snapshot.v1",
+  "source": "FSSAI Schedule IV summaries, ASCI guidelines (paraphrased for the simulator)",
+  "license": "summary excerpts — refer to original notifications for legal text",
+  "policies": [
+    {
+      "id": "FSSAI/COLD/2026/22",
+      "title": "Cold-chain logging for perishables",
+      "summary": "Retailers handling perishable dairy and leafy greens must record cold-chain temperature continuity at least every 30 minutes. Inventory without a current cold_chain_log entry cannot be sold.",
+      "applicable_categories": ["dairy", "leafy_greens"],
+      "schema_version_required": "PRICING.v2"
+    },
+    {
+      "id": "FSSAI/PROD/2026/15",
+      "title": "Farmer-traceability for produce",
+      "summary": "Acceptances of farmer surplus must record the originating farmer_id. Anonymous farmer acceptances will be auto-declined and may attract penalty.",
+      "applicable_categories": ["fruits", "vegetables", "leafy_greens", "herbs"],
+      "schema_version_required": "FARMER.v2"
+    },
+    {
+      "id": "ASCI-IND/2026/04",
+      "title": "Influencer disclosure mandate",
+      "summary": "Trend-driven restock decisions must include a source_verification field documenting whether the originating signal was a paid promotion, and what corroborating consumer data was checked.",
+      "applicable_categories": ["all"],
+      "schema_version_required": "TREND.v2"
+    },
+    {
+      "id": "DPIIT/CAP/2026/08",
+      "title": "Emergency discount cap",
+      "summary": "During declared supply shocks, discount multipliers cannot fall below 0.40. The legacy `price_multiplier` field is replaced with `clearance_action` to clearly signal regulatory awareness.",
+      "applicable_categories": ["all"],
+      "schema_version_required": "PRICING.v3"
+    }
+  ]
+}

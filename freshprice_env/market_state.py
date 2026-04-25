@@ -201,11 +201,14 @@ class MarketStateBuilder:
     @staticmethod
     def build(scenario: CurriculumScenario, rng: random.Random) -> SimulatedMarketState:
         builders = {
-            CurriculumScenario.STABLE_WEEK:  MarketStateBuilder._build_stable_week,
-            CurriculumScenario.BUSY_WEEKEND: MarketStateBuilder._build_busy_weekend,
-            CurriculumScenario.FARMER_WEEK:  MarketStateBuilder._build_farmer_week,
-            CurriculumScenario.TREND_WEEK:   MarketStateBuilder._build_trend_week,
-            CurriculumScenario.CRISIS_WEEK:  MarketStateBuilder._build_crisis_week,
+            CurriculumScenario.STABLE_WEEK:     MarketStateBuilder._build_stable_week,
+            CurriculumScenario.BUSY_WEEKEND:    MarketStateBuilder._build_busy_weekend,
+            CurriculumScenario.FARMER_WEEK:     MarketStateBuilder._build_farmer_week,
+            CurriculumScenario.TREND_WEEK:      MarketStateBuilder._build_trend_week,
+            CurriculumScenario.CRISIS_WEEK:     MarketStateBuilder._build_crisis_week,
+            # REGULATORY_WEEK reuses the crisis baseline; the regulator
+            # adds the difficulty by mutating the directive schema.
+            CurriculumScenario.REGULATORY_WEEK: MarketStateBuilder._build_crisis_week,
         }
         builder = builders.get(scenario)
         if builder is None:

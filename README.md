@@ -1,5 +1,5 @@
 ---
-title: QStorePrice
+title: QStorePrice Commons
 emoji: 🥭
 colorFrom: green
 colorTo: red
@@ -8,292 +8,273 @@ app_file: app.py
 pinned: false
 ---
 
-# QStorePrice AI — Perishable Goods Intelligence
+# QStorePrice Commons — a 6+1 Multi-Agent Perishable Goods Ecosystem
 
-> Can an RL-trained LLM manage every pricing, procurement, and restocking
-> decision a small grocery dark store faces — better than gut instinct alone?
+> Six LLM-driven actors with conflicting incentives, hidden private information,
+> and persistent reputation negotiate a shared market over a 30-day horizon.
+> A seventh — the Oversight Auditor — watches them all.
 
----
-
-## 1. The Problem
-
-Indian grocery dark stores lose **15–30% of perishable inventory** to expiry.
-The decisions that drive this waste — when to discount, whether to accept a
-farmer's surplus offer, and whether a viral food trend justifies a restock —
-happen under time pressure with no decision support. Human buyers are fast but
-inconsistent: the same mango surplus gets accepted on Tuesday and rejected on
-Thursday for no documented reason.
-
-Standard numeric-action RL fails here because the action space is not a
-price multiplier float — it is a *reasoning chain* that must weigh shelf life,
-cash buffer, demand timing, and competitive signals simultaneously. A model
-that produces a correct number for the wrong reason is not useful.
-
-**QStorePrice AI closes this gap**: it trains a 7B LLM via RL (SFT + GRPO + DPO)
-to write structured **Operating Briefs** that make the reasoning visible,
-auditable, and measurable — not just the outcome.
+QStorePrice was originally pitched as "an RL-trained LLM that writes pricing
+briefs." The hackathon-grade version flips that upside down: pricing is one
+sub-task inside a *partially observable, multi-agent* simulation that targets
+**Theme #1 (multi-agent)** + **Theme #2 (long-horizon)** simultaneously, with
+bonus alignment on the **Fleet AI**, **Halluminate**, **Patronus**, and **Mercor**
+sub-prizes.
 
 ---
 
-## 2. The Environment
+## 1. The seven actors
 
-### What the agent sees
-
-Every 2 simulated hours (8 ticks at 15-min resolution) the agent receives a
-structured prompt describing:
-
-- Active inventory batches with expiry urgency (`WATCH / URGENT / CRITICAL`)
-- Open farmer surplus offers with viability pre-computation
-- Active social trend signals with projected demand lift
-- Current cash risk buffer and WRR accumulator
-
-### What the agent does
-
-The agent writes an **Operating Brief** — a 6-section structured document:
-
-```
-SITUATION:     Farmer Rajan offers 50 kg mangoes at Rs 35/kg, 48 hrs shelf life.
-               Current mango inventory: 12 units at WATCH (35 hrs remaining).
-
-SIGNAL ANALYSIS: No active trend signals for mangoes.
-
-VIABILITY CHECK:
-  Shelf life: PASS — 48 hrs covers projected sell-through of 32 hrs
-  Break-even: PASS — market Rs 75/kg vs break-even Rs 43/kg (74% margin)
-  Worst-case P&L: FLAG — 60% sell-through at Rs 47/kg barely covers cost
-
-RECOMMENDATION: ACCEPT. Strong viability (0.78) with healthy buffer.
-
-DIRECTIVE: {"engine": "FARMER", "actions": [{"offer_id": "offer_001", "decision": "ACCEPT"}]}
-
-CONFIDENCE: HIGH
-```
-
-A deterministic **Rule Executor** converts the `DIRECTIVE` JSON into typed
-actions for three engines. The LLM does language work; the executor does math.
-
-### What the agent is rewarded for
-
-All three engines collapse into one metric:
-
-> **WRR (Weekly Waste Recovery Rate)** = revenue recovered from at-risk inventory
-> / cost of at-risk inventory
-
-| Engine | Reward Component | Weight |
-|--------|-----------------|--------|
-| Dynamic Pricing — auto-discount items nearing expiry | `r1_pricing` | 0.50 |
-| Farmer Offer — accept / counter / decline surplus | `r2_farmer` | 0.30 |
-| Social Trend — restock before viral demand arrives | `r3_trend` | 0.20 |
-
-**Target WRR**: 0.61 (baseline gut-instinct) → 0.89 (trained model)
-
-### Training pipeline
-
-```
-SFT warm-start  →  GRPO (5-level curriculum)  →  DPO (preference pairs)
-   50 briefs          STABLE → BUSY → FARMER        WRR-filtered
-                      → TREND → CRISIS              + anti-hack audit
-```
-
-Curriculum promotes at WRR ≥ 0.70 over 5 consecutive valid episodes.
-CRISIS_WEEK (Level 4) is the benchmark: simultaneous supplier delay,
-viral trend, 3 farmer offers, and depleted risk buffer.
-
-### Anti-hack guards
-
-The environment blocks pathological strategies that game WRR without genuine
-decision quality:
-
-| Guard | Trigger | Consequence |
-|-------|---------|-------------|
-| Early deep discount | `price_multiplier < 0.35` with `hours_to_expiry > 48` | Price not applied; r1 penalty |
-| Reckless acceptance | ACCEPT with `viability_score < 0.30` | Forced DECLINE; r2 penalty |
-| Trend order flood | > 1 order per category within 72 hrs | Hard cap; r3 penalty |
-| Surrogate gaming | `brief_quality > 0.90` but `WRR < 0.50` | Excluded from DPO pairs |
+| Agent | Role | Hidden info | LLM? |
+|---|---|---|---|
+| **StoreAgent** (hero, the trained model) | Writes Operating Briefs + ## NOTEBOOK + ## MESSAGES | private cash, plan | yes |
+| **CompetitorStoreAgent** | Same market, different store | competitor inventory + cash | yes (frozen ckpt or scripted) |
+| **FarmerAgent** (pool of 5) | Emits BIDs, reacts to COUNTERs, **remembers** every interaction | reserve price, alternative buyers | optional LLM, otherwise persona-based |
+| **ConsumerCohortAgent** (3 personas: budget / foodie / festival) | Reactive demand boosts | true willingness-to-pay | rule-based (fast) |
+| **InfluencerAgent** | Emits trend signals — half are paid promotion | which signals are paid | procedural |
+| **RegulatorAgent** | Mid-episode policy drift (FSSAI, ASCI, DPIIT) | drift schedule | procedural |
+| **OversightAuditor** (the 7th) | Reads bus + briefs + notebook → trust score + narrative + recommendation | nothing — that's the point | LLM (or rule-based fallback) |
 
 ---
 
-## 3. Results
+## 2. What's new vs. the v1 single-store env
 
-*Results below are projected from curriculum promotion thresholds.
-Run training and evaluation to replace with actuals.*
-
-### WRR: Before vs After Training
-
-| Scenario | Zero-Shot WRR | Trained WRR | Improvement |
-|----------|--------------|-------------|-------------|
-| STABLE_WEEK | ~0.09 | ~0.72 | +685% |
-| BUSY_WEEKEND | ~0.06 | ~0.70 | +1067% |
-| FARMER_WEEK | ~0.04 | ~0.68 | +1485% |
-| TREND_WEEK | ~0.07 | ~0.65 | +857% |
-| CRISIS_WEEK | ~0.03 | ~0.58 | +1833% |
-
-### Reasoning quality vs WRR correlation
-
-The research question: does **brief quality** improve alongside WRR, or does
-the model find WRR shortcuts that bypass reasoning?
-
-`brief_quality_score` is scored independently of WRR (structural completeness +
-claim grounding + confidence calibration). If it *leads* WRR improvement by a
-few episodes during GRPO, the model is learning to reason better — not gaming.
-
-*Correlation plot — generate after training by running `eval/evaluator.py`
-and `eval/reward_curves.py`. The PNG will appear in `eval/plots/`.*
-
-### Training curves
-
-*Reward curve plots — generated automatically during training and saved to
-`eval/plots/` by `eval/reward_curves.py`.*
+| Feature | v1 | v2 (now) |
+|---|---|---|
+| Episode length | 7 days / 84 briefs | **30 days / 360 briefs** in `LongHorizonFreshPriceEnv` |
+| Memory | LLM context only | **AgentNotebook**: `NOTE` / `RECALL` / `COMMIT` / `UPDATE_PLAN`, with FIFO eviction + pinned slots |
+| Reward | r1+r2+r3 → WRR | + **r4 plan adherence**, **r5 token-scaled** (Mercor), **cooperation_index** |
+| Multi-agent | static rule-based consumer | **bus + competitor + farmer pool + auditor + regulator** |
+| Farmer behaviour | fixed scheduled offers | **persistent SQLite reputation**, persona-driven counters, trust-modulated reserves |
+| Schema | fixed | **versioned schemas** (`PRICING.v1/v2/v3`, `FARMER.v1/v2`, `TREND.v1/v2`); regulator mutates mid-episode |
+| Trend signals | all genuine | **half paid promotion** with hidden `is_paid_promotion` flag; corroborants observable |
+| Curriculum | 5 hand-crafted levels | + 6th `REGULATORY_WEEK` + **adaptive `ScenarioComposer`** (Thompson sampling) |
+| Self-play | none | **rotating frozen-opponent** negotiation arena (Theme #4) |
+| Eval | WRR only | + **Theory-of-Mind probe** + **counterfactual replay** + **oversight audit grade** |
+| Dashboard | polling HTML | **WebSocket-streamed**, 6+1 agent panes, replay slider, audit narrative card |
 
 ---
 
-## 4. Why It Matters
-
-**For the hackathon**: QStorePrice demonstrates that an LLM writing structured
-operating documents is a viable RL agent. The brief format makes the reward
-signal interpretable (you can read *why* the model got a high r2 score this
-episode), prevents reward hacking through constitutional checks, and produces
-artefacts (the briefs themselves) that are useful outside the training loop.
-
-**For the domain**: A trained QStorePrice model is a drop-in decision assistant
-for any quick-commerce operator running perishable SKUs. The Operating Brief
-format can be audited by a human buyer, logged for compliance, and continuously
-improved by running more GRPO episodes on new scenarios.
-
-**For RL research**: The `brief_quality_score` / `WRR` correlation across
-training episodes is a falsifiable claim about whether RL improves LLM reasoning
-or just WRR-gaming. One model family (Qwen-2.5-7B), one reward function — but
-a replicable methodology.
-
----
-
-## Project Structure
+## 3. Architecture
 
 ```
-freshprice_env/          # Gym-style simulation environment
-  freshprice_env.py      # FreshPriceEnv(gym.Env) — 672-tick episodes
-  engines/               # pricing_engine, farmer_engine, trend_engine
-  brief_pipeline/        # prompt_builder → parser → validator → rule_executor
-  reward.py              # WRRRewardEngine (r1 + r2 + r3 → WRR)
-  openenv_adapter.py     # OpenEnv wrapper (BriefAction, BriefObservation, FreshPriceState)
+freshprice_env/
+  freshprice_env.py             # legacy single-store gym env (still works)
+  long_horizon_env.py           # 30-day, sparse reward, NOTEBOOK, plan-adherence
+  market_commons_env.py         # ★ headline multi-agent ecosystem
+  multi_agent_env.py            # hero + reactive consumer
+  multi_store_env.py            # cooperative N-store transfers
+  negotiation_env.py            # bilateral self-play arena
 
-models.py                # Top-level re-exports for pip clients
-client.py                # QStorePriceEnv(HTTPEnvClient) — remote client
-server/app.py            # FastAPI server via create_fastapi_app
-openenv.yaml             # Environment manifest
-Dockerfile               # HF Space / Docker image
+  agents/
+    farmer_agent.py             # ★ LLM-or-persona farmer with reputation
+    competitor_store_agent.py   # ★ rival store with 4 personas
+    oversight_auditor.py        # ★ 7th-agent trajectory auditor (Fleet AI)
+    regulator_agent.py          # ★ schema-drift broadcaster (Patronus)
+    influencer_agent.py         # ★ trend signals incl. paid promotion
+    consumer_agent.py           # rule-based reactive consumer
 
-training/
-  train.py               # SFT → GRPO → DPO orchestration
-  sft_trainer.py         # SFT warm-start
-  grpo_trainer.py        # GRPO training loop
-  dpo_trainer.py         # DPO fine-tuning
-  curriculum.py          # 5-level curriculum manager
+  notebook/
+    agent_notebook.py           # ★ durable scratchpad (NOTE/COMMIT/PLAN)
+    notebook_directives.py      # ★ parser + executor + commitment evaluator
+
+  protocol/
+    market_bus.py               # ★ typed inter-agent message log
+
+  persistence/
+    reputation_store.py         # ★ SQLite reputation graph
+
+  brief_pipeline/
+    schema_registry.py          # ★ versioned DIRECTIVE schemas
+
+  scenario_composer.py          # ★ Thompson-sampling adaptive curriculum
+  reward.py                     # extended w/ r4, r5, cooperation_index
 
 eval/
-  evaluator.py           # Deterministic evaluation (greedy decoding)
-  reward_curves.py       # WRR + loss curve plots → eval/plots/
-  anti_hack_checker.py   # Trajectory anti-hack audit
+  theory_of_mind_probe.py       # ★ ToM held-out evaluation
+  counterfactual_replay.py      # ★ swap-one-decision replay tool
+  evaluator.py                  # WRR-greedy held-out eval
+  anti_hack_checker.py          # constitutional audit
+  baselines/                    # random + rule-based + run_baselines.py
+
+training/
+  train.py                      # SFT → GRPO → DPO orchestration
+  self_play.py                  # ★ rotating-opponent negotiation self-play
+  oversight_trainer.py          # ★ SFT for the auditor LLM
+  grpo_trainer.py / sft_trainer.py / dpo_trainer.py
+  curriculum.py / counterfactual.py / trajectory_buffer.py
+
+server/
+  app.py                        # FastAPI + ★ /commons/* endpoints + ★ /commons/ws
+
+static/v2/                      # ★ new live dashboard
+data/snapshots/                 # ★ real Bangalore mandi prices, food trends, FSSAI excerpts
 ```
 
-## Quick Start
+★ = added in v2.
+
+---
+
+## 4. Getting started
 
 ```bash
-# Install (GPU required for training)
 pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
 pip install -r requirements_training.txt
 
-# Verify environment (CPU-only, no GPU needed)
-python -c "from freshprice_env.freshprice_env import FreshPriceEnv; env = FreshPriceEnv(); env.reset()"
+# Verify everything wired up (CPU only)
+python -c "from freshprice_env.market_commons_env import MarketCommonsEnv; \
+           from freshprice_env.enums import CurriculumScenario; \
+           env = MarketCommonsEnv(scenario=CurriculumScenario.CRISIS_WEEK); \
+           obs, info = env.reset(); print(info['mode'])"
 
-# Run training pipeline
-python training/train.py \
-  --base-model Qwen/Qwen2.5-7B-Instruct \
-  --output-dir checkpoints \
-  --wandb-project qstoreprice-ai
-
-# Evaluate a checkpoint
-python eval/evaluator.py \
-  --checkpoint checkpoints/promoted_level1 \
-  --episodes 10
+# Run all tests (46 of them, ~1s)
+python -m unittest discover tests -v
 ```
 
-## OpenEnv Server
+---
+
+## 4b. Use your trained weights in the dashboard
+
+After running `kaggle_qstoreprice.ipynb` end-to-end on Kaggle the SFT
+checkpoint sits at `/kaggle/working/checkpoints/final` and (if you set
+`HF_TOKEN`) is also pushed to the HF Hub. Tying it back to the local
+FastAPI dashboard is one env-var flip:
+
+| Path | When to use | What to set |
+|---|---|---|
+| **HF Inference API** | no GPU on your laptop | `AGENT_BACKEND=hf_inference`, `HF_REPO_ID=<user/repo>`, `HF_TOKEN=hf_…` |
+| **Local checkpoint** | you have an 8 GB+ GPU and downloaded `final/` | `AGENT_BACKEND=local`, `MODEL_PATH=/abs/path/to/final` |
+| **Scripted fallback** | first run, no model yet | `AGENT_BACKEND=scripted` (or just leave the others unset) |
+
+Then start the server in a fresh terminal:
 
 ```bash
-# Start the OpenEnv FastAPI server locally
+pip install -r requirements.txt
 uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
-
-# Or via Docker
-docker run -d -p 8000:8000 <image>
-
-# Connect with the client
-python -c "
-from client import QStorePriceEnv
-env = QStorePriceEnv('http://localhost:8000')
-obs, info = env.reset()
-print(obs[:200])
-"
 ```
 
-Endpoints: `GET /health` · `POST /reset` · `POST /step` · `GET /state` · `WS /ws` · `GET /docs`
+Open <http://localhost:8000>. The **Run live demo** panel at the top of
+the dashboard shows the active backend and exposes a one-click episode
+run that drives the Simulation Theater with the loaded model. Scripted
+mode is what you see before you have a checkpoint — the briefs are
+heuristic but well-formed (all 6 sections, valid JSON DIRECTIVE), so
+the rest of the dashboard works end-to-end on day one.
 
-### Live Dashboard & Admin Endpoints
+Diagnostic endpoints once the server is up:
 
-The server also serves a polling HTML dashboard at `/` with admin JSON endpoints:
+| Endpoint | What it tells you |
+|---|---|
+| `GET /agent/info` | which backend was loaded and how |
+| `POST /agent/brief` | one-shot brief from a prompt |
+| `POST /agent/run_episode` | run an episode, push frames to the theater |
+| `GET /commons/sim_frames` | the ring buffer of recent tick frames |
+| `GET /commons/rider_pool` | live rider-queue + transit-spoilage stats |
+| `GET /commons/cohorts` | per-cohort retention / walk-aways |
+| `GET /commons/liquidation` | dead-stock B2B firesale history |
 
-- `GET /` — live dashboard (KPIs, per-scenario WRR bars, reward curve, recent episodes)
-- `GET /admin/dashboard` — full metrics snapshot (JSON)
-- `GET /admin/metrics/scores` — per-episode records, optionally `?scenario=STABLE_WEEK`
-- `GET /admin/metrics/reward-curve` — per-step reward records
-- `GET /admin/tasks` — curriculum scenario list
-- `POST /admin/metrics/reset` — clear in-memory metrics
+---
 
-Metrics are populated by the GRPO rollout cell and the evaluation cell in
-[`kaggle_qstoreprice.ipynb`](kaggle_qstoreprice.ipynb), or by any code that
-calls `freshprice_env.monitoring.metrics.record_step` /
-`record_episode`.
+## 5. The five reward components
 
-### Submission Validation
+WRR remains the headline KPI. The expanded reward signal exposes more of *why*
+the agent behaves the way it does:
+
+| Component | Source | What it measures |
+|---|---|---|
+| `r1_pricing` | PricingEngine | Discount timing vs. expiry urgency |
+| `r2_farmer` | FarmerEngine | Viability + reputation-aware accept/counter/decline |
+| `r3_trend` | TrendEngine | Restock decisions; penalises paid-promo gullibility |
+| `r4_plan_adherence` | AgentNotebook | Honored commitments − broken commitments |
+| `r5_reasoning_tokens` | Reward engine | Capped, quality-gated token-scaled reward (Mercor) |
+| `cooperation_index` | MarketCommonsEnv | Pareto-improving exchanges with other agents |
+
+---
+
+## 6. Hackathon theme alignment
+
+| Theme | How we hit it |
+|---|---|
+| **#1 Multi-Agent Interactions** | 6+1 actors share a partially-observable bus; farmer reputation persists across episodes; cooperation index measures pareto-improving messages |
+| **#2 (Super) Long-Horizon Planning** | 30-day episodes (360 briefs), sparse weekly reward, prompt forcibly truncated to ~3.5 KB so the AgentNotebook is the *only* memory, plan-adherence reward grades multi-week commitments |
+| **#3 World Modeling** | External shocks (weather, festivals), influencer disinformation, regulator policy drift |
+| **#4 Self-Improvement** | `ScenarioComposer` Thompson-sampling adaptive curriculum, rotating-opponent self-play in NegotiationEnv |
+| **Fleet AI sub-prize** | OversightAuditor reads trajectories and writes structured audits (TRUST_SCORE / SUSPICIOUS_PATTERNS / NARRATIVE / RECOMMENDATION). Trains via `training/oversight_trainer.py` |
+| **Halluminate sub-prize** | StoreAgent manages multiple actors (farmers, competitor, influencer, regulator) to discover and achieve goals |
+| **Patronus sub-prize** | `SchemaRegistry` + `RegulatorAgent` mutate the DIRECTIVE schema mid-episode (v1→v2→v3); briefs that don't adapt fail validation |
+| **Mercor sub-prize** | `r5_reasoning_tokens` is a capped reward that scales with brief token output, gated by quality floor — falsifiable curve |
+
+---
+
+## 7. Live dashboard
 
 ```bash
-python validate_submission.py
+uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
+# open http://localhost:8000/        ← V2 multi-agent dashboard
+# open http://localhost:8000/legacy  ← V1 polling dashboard (still works)
 ```
 
-Runs ~24 checks: openenv.yaml schema, module imports, env reset across all
-five `CurriculumScenario`s, server admin routes, static files, SFT generator
-sanity. Exit code 0 = ready to submit.
+The V2 dashboard shows:
 
-### Tests
+- 6+1 live agent panes streaming bus messages in real time
+- KPI strip: WRR, Cooperation Index, Plan Adherence, Auditor Trust, Pool Trust, Active Schemas
+- Notebook panel: plan, pinned notes, recent notes, commitments (✓ / ✗ / ⏳)
+- Latest oversight audit narrative
+- Counterfactual replay slider (POSTs to `/commons/replay`)
+- Adaptive curriculum hardness posteriors per axis
+- Full bus message log (most recent 200)
 
-```bash
-python -m unittest tests.test_env -v
+---
+
+## 8. The agent's brief, expanded
+
+Briefs are the same 6-section document, plus two new optional sections:
+
+```
+SITUATION:        ...
+SIGNAL ANALYSIS:  ...
+VIABILITY CHECK:  ...
+RECOMMENDATION:   ...
+DIRECTIVE:        {"engine": "PRICING", "actions": [...]}
+CONFIDENCE:       HIGH | MEDIUM | LOW
+
+## NOTEBOOK
+NOTE: cash_buffer -> 4200
+NOTE_PIN: regulator_pricing_v3_required -> after tick 528
+COMMIT: inventory_below:dairy:30@800 | clear dairy by midnight day 6
+UPDATE_PLAN: protect cash buffer through day 4, then unwind dairy
+
+## MESSAGES
+CHAT @farmer.rajan: appreciate the mango offer, considering
+BID  @farmer.rajan: 38.0/kg for 50kg, 24h decision window
+REVEAL @store_002: we are over-stocked on dairy this week
 ```
 
-## Training Scenarios
+---
 
-| Level | Scenario | Engines Active | Promotion |
-|-------|----------|----------------|-----------|
-| 0 | STABLE_WEEK | Pricing only | WRR ≥ 0.70 × 5 episodes |
-| 1 | BUSY_WEEKEND | Pricing + Trend | WRR ≥ 0.70 × 5 episodes |
-| 2 | FARMER_WEEK | Pricing + Farmer | WRR ≥ 0.70 × 5 episodes |
-| 3 | TREND_WEEK | All 3 engines | WRR ≥ 0.70 × 5 episodes |
-| 4 | CRISIS_WEEK | All 3 engines | Benchmark only |
+## 9. Endpoints
 
-## Links
+OpenEnv contract (single-store):
 
-- **HuggingFace Space**: ADD_AFTER_TRAINING — `openenv push` will print the URL
-- **WandB Training Run**: ADD_AFTER_TRAINING — set `--wandb-project qstoreprice-ai`
-- **OpenEnv version**: openenv-core ≥ 0.2.0 (hackathon target: v0.2.3)
-- **Base model**: Qwen/Qwen2.5-7B-Instruct
-- **Environment class**: `freshprice_env.openenv_adapter.FreshPriceOpenEnv`
-- **Manifest**: `openenv.yaml`
+`GET /health` · `POST /reset` · `POST /step` · `GET /state` · `WS /ws` · `GET /docs`
 
-## Citation
+Multi-agent commons:
+
+`GET /commons/snapshot` · `GET /commons/bus` · `GET /commons/audit`
+`GET /commons/notebook` · `GET /commons/scenario_composer`
+`POST /commons/replay` · `WS /commons/ws`
+
+Admin / observability:
+
+`GET /admin/dashboard` · `GET /admin/metrics/scores` · `GET /admin/metrics/reward-curve`
+`GET /admin/tasks` · `POST /admin/metrics/reset`
+
+---
+
+## 10. Citation
 
 ```bibtex
-@software{qstoreprice_ai_2026,
-  title   = {QStorePrice AI: RL-Trained LLM for Perishable Goods Intelligence},
+@software{qstoreprice_commons_2026,
+  title   = {QStorePrice Commons: A 6+1 Multi-Agent Perishable-Goods Ecosystem},
   year    = {2026},
   url     = {https://github.com/nandeshkanagaraju/QStorePrice},
 }

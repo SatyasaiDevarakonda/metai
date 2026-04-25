@@ -45,6 +45,14 @@ ANTIHACK_EARLY_DISCOUNT_PRICE_THRESHOLD: float = 0.35   # below this = suspiciou
 ANTIHACK_EARLY_DISCOUNT_HOURS_THRESHOLD: float = 48.0   # above this = suspicious
 
 # ---------------------------------------------------------------------------
+# Parse-failure handling — closes a reward-leak surface where a brief that
+# fails to parse can still earn positive WRR delta from natural sales.
+# ---------------------------------------------------------------------------
+PARSE_FAIL_REWARD_PENALTY: float = 0.30   # subtracted from per-brief reward
+PARSE_FAIL_FLAG_THRESHOLD: float = 0.0    # any positive reward + parse_fail = anti-hack
+VALIDATION_FAIL_REWARD_PENALTY: float = 0.20  # smaller than parse-fail (parsed but invalid)
+
+# ---------------------------------------------------------------------------
 # Farmer engine (Engine 2) constants
 # ---------------------------------------------------------------------------
 MAX_ACTIVE_FARMER_OFFERS: int = 3
@@ -238,6 +246,88 @@ MIN_UNITS_FOR_TRANSFER: int = 5                     # minimum transfer threshold
 # ---------------------------------------------------------------------------
 # Long-horizon mode (Theme #2)
 # ---------------------------------------------------------------------------
-LONG_HORIZON_DAYS: int = 28
-LONG_HORIZON_TICKS: int = LONG_HORIZON_DAYS * TICKS_PER_DAY   # 2688
+LONG_HORIZON_DAYS: int = 30                        # 30-day month-long horizon
+LONG_HORIZON_TICKS: int = LONG_HORIZON_DAYS * TICKS_PER_DAY   # 2880
 SPARSE_REWARD_INTERVAL_DAYS: int = 7               # reward paid weekly, not per-brief
+LONG_HORIZON_BRIEFS_PER_EPISODE: int = (
+    LONG_HORIZON_DAYS * BRIEFS_PER_DAY              # 30 days * 12 briefs = 360
+)
+
+# Long-horizon prompt truncation. The tick-context prompt is forcibly
+# trimmed to this many characters AFTER the notebook block has been
+# prepended. Forces the agent to externalize state into the notebook —
+# without it, briefs from day 3 are gone by day 27.
+LONG_HORIZON_PROMPT_TAIL_CHARS: int = 3500
+# Brief-history window inside the prompt (most recent K briefs only)
+LONG_HORIZON_RECENT_BRIEFS_WINDOW: int = 4
+
+# Plan-adherence reward (r4): bonus per honored commitment, penalty per
+# broken commitment. Stored positive — applied as +/- in reward.py.
+R4_HONORED_COMMITMENT_BONUS: float = 0.08
+R4_BROKEN_COMMITMENT_PENALTY: float = 0.10
+
+# Token-scaled reasoning reward (r5, Mercor sub-prize).
+# r5 = clip(token_count / R5_TOKEN_TARGET, 0, R5_CAP) iff quality >= R5_QUALITY_FLOOR
+R5_TOKEN_TARGET: int = 600          # full reward at ~600 tokens of brief
+R5_CAP: float = 0.20                # caps at 20% of WRR delta — never dominant
+R5_QUALITY_FLOOR: float = 0.55      # below this, longer briefs get nothing
+R5_TOKEN_HARD_CAP: int = 1200       # beyond this, no extra credit (anti-bloat)
+
+# Cooperation index (multi-store, multi-agent). Computed in MarketCommonsEnv.
+COOPERATION_INDEX_TRANSFER_WEIGHT: float = 0.35
+COOPERATION_INDEX_MESSAGE_WEIGHT: float = 0.25
+COOPERATION_INDEX_PARETO_WEIGHT: float = 0.40
+
+# ---------------------------------------------------------------------------
+# Blinkit/Zepto-style quick-commerce mechanics
+# These tighten the simulation so the LLM has to reason about throughput,
+# cohort heterogeneity, and dead-stock liquidation, not just price.
+# Public sources: Blinkit dark-store ops post-mortems, Zepto Plus
+# launch press, FY24 ICRA QCom report.
+# ---------------------------------------------------------------------------
+
+# Rider/courier pool. A single dark store typically runs 6-10 riders.
+BLINKIT_DEFAULT_RIDER_COUNT: int = 6
+# Average ferry time per order (store -> pin -> store) at a 1.5 km median.
+BLINKIT_RIDER_FERRY_MINUTES: float = 14.0
+# Promised ETA tiers. The brief can opt batches into Express by setting
+# eta_tier="EXPRESS" in a directive; otherwise standard applies.
+BLINKIT_EXPRESS_PROMISE_MINUTES: float = 10.0
+BLINKIT_STANDARD_PROMISE_MINUTES: float = 30.0
+# r6_delivery_quality: penalty per order whose freshness clock expires
+# while it sat in the rider queue (this is the *real* spoilage in QCom,
+# not shelf-spoilage).
+R6_TRANSIT_SPOILAGE_PENALTY: float = 0.45
+# r6 bonus per order delivered within promised ETA (caps at +0.20 per brief).
+R6_ON_TIME_BONUS: float = 0.04
+R6_BONUS_CAP_PER_BRIEF: float = 0.20
+
+# Consumer cohort weights (must sum to 1.0). Premium cohort is small
+# in volume but disproportionately drives loyalty-program revenue.
+COHORT_WEIGHT_PREMIUM: float = 0.18    # Blinkit Plus / Zepto Pass holders
+COHORT_WEIGHT_MASS: float = 0.62
+COHORT_WEIGHT_BARGAIN: float = 0.20
+# Per-cohort price elasticities (demand = ratio**elasticity).
+COHORT_ELASTICITY_PREMIUM: float = 0.40
+COHORT_ELASTICITY_MASS: float = 1.20
+COHORT_ELASTICITY_BARGAIN: float = 2.50
+# Per-cohort ETA tolerance (minutes). Premium cohort walks if late.
+COHORT_ETA_TOLERANCE_PREMIUM_MIN: float = 12.0
+COHORT_ETA_TOLERANCE_MASS_MIN: float = 25.0
+COHORT_ETA_TOLERANCE_BARGAIN_MIN: float = 60.0
+# Per-cohort freshness tolerance: max URGENT/CRITICAL ratio they accept.
+COHORT_FRESHNESS_TOL_PREMIUM: float = 0.05
+COHORT_FRESHNESS_TOL_MASS: float = 0.50
+COHORT_FRESHNESS_TOL_BARGAIN: float = 1.00
+
+# Liquidation channel — B2B firesale for dead stock.
+# Recovery ratio: fraction of original price recovered when LIQUIDATEd.
+LIQUIDATION_RECOVERY_RATIO: float = 0.18
+# Anti-hack: liquidating non-CRITICAL stock is a violation. The agent
+# cannot dump fresh inventory to game R1.
+LIQUIDATION_MIN_URGENCY_HOURS: float = 6.0
+LIQUIDATION_RECKLESS_PENALTY: float = 0.50
+# r7_liquidation: positive reward when expected discount-driven sell-through
+# is *less* than what we recovered via B2B; negative otherwise.
+R7_LIQUIDATION_BONUS: float = 0.10
+R7_LIQUIDATION_RECKLESS: float = 0.50

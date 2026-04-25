@@ -1,12 +1,17 @@
-"""WRRRewardEngine — combines r1 + r2 + r3 into the unified WRR metric.
+"""WRRRewardEngine — unified reward with optional r4/r5 extensions.
 
-Individual reward components are computed by their engines:
+Core components (always present):
   r1 → PricingEngine.tick()
   r2 → FarmerEngine.process_directive() + FarmerEngine.resolve_outcomes()
   r3 → TrendEngine.process_directive() + TrendEngine.resolve_outcomes()
 
+Optional components (long-horizon / multi-agent envs):
+  r4 → plan-adherence (notebook commitments honored vs broken)
+  r5 → token-scaled reasoning reward (Mercor sub-prize, capped)
+  cooperation_index → bilateral cooperation in multi-agent settings
+
 This class:
-  1. Accumulates r1, r2, r3 across the episode
+  1. Accumulates r1..r5 across the episode
   2. Computes the final WRR at end of episode
   3. Runs the constitutional anti-hack audit before DPO pair generation
   4. Produces the reward dict that GRPOTrainer receives
@@ -18,6 +23,10 @@ from freshprice_env.constants import (
     CATEGORY_AVG_PRICE_RS,
     CATEGORY_AVG_WEIGHT_KG,
     CO2_PER_KG_FOOD_WASTE,
+    R5_CAP,
+    R5_QUALITY_FLOOR,
+    R5_TOKEN_HARD_CAP,
+    R5_TOKEN_TARGET,
     TREND_COOLDOWN_HRS,
     WATER_LITRES_PER_KG_FOOD_WASTE,
 )
@@ -38,8 +47,12 @@ class WRRRewardEngine:
         self._r1_history: list[float] = []
         self._r2_history: list[float] = []
         self._r3_history: list[float] = []
+        self._r4_history: list[float] = []   # plan adherence
+        self._r5_history: list[float] = []   # token-scaled reasoning
+        self._cooperation_history: list[float] = []
         self._antihack_violations: list[dict] = []
         self._brief_quality_scores: list[float] = []
+        self._brief_token_counts: list[int] = []
         self._tick_count: int = 0
         # Carbon footprint tracking
         self._units_expired_by_category: dict[str, int] = {}
@@ -100,6 +113,56 @@ class WRRRewardEngine:
         """
         self._brief_quality_scores.append(quality_score)
 
+    def record_brief_tokens(self, brief_text: str) -> int:
+        """Record approximate token count of a brief for r5 calculation.
+
+        Uses a whitespace-+-punctuation tokenizer as a fast approximation.
+        Real tokenizer counts vary across models; this estimator is
+        within ~15% for English-heavy briefs and is deterministic.
+        Returns the count it stored.
+        """
+        text = brief_text or ""
+        # Tokens ≈ word count + count of standalone punctuation
+        words = text.split()
+        approx_tokens = int(len(words) * 1.3)   # 1.3 tokens/word on average
+        self._brief_token_counts.append(approx_tokens)
+        return approx_tokens
+
+    def record_r4_plan_adherence(self, delta: float) -> None:
+        """Record per-brief plan-adherence delta from the long-horizon env."""
+        self._r4_history.append(float(delta))
+
+    def record_cooperation_index(self, idx: float) -> None:
+        """Record per-step cooperation index (multi-store / multi-agent)."""
+        self._cooperation_history.append(float(idx))
+
+    def compute_token_reward(
+        self, brief_text: str, quality_score: float,
+    ) -> float:
+        """Mercor-style capped token-scaled reward for the latest brief.
+
+        Stored *and* returned so the env can add it to the per-brief
+        reward and the dashboard can plot it. Below the quality floor
+        the reward is zero — long bad briefs earn nothing.
+        """
+        approx_tokens = self.record_brief_tokens(brief_text)
+        if quality_score < R5_QUALITY_FLOOR:
+            self._r5_history.append(0.0)
+            return 0.0
+        # Linear ramp to R5_TOKEN_TARGET, then a soft plateau, then zero
+        # past R5_TOKEN_HARD_CAP (anti-bloat).
+        if approx_tokens >= R5_TOKEN_HARD_CAP:
+            r5 = 0.0
+        elif approx_tokens >= R5_TOKEN_TARGET:
+            # Plateau: full cap, but decays linearly past target toward hard cap
+            decay_zone = R5_TOKEN_HARD_CAP - R5_TOKEN_TARGET
+            decay = (approx_tokens - R5_TOKEN_TARGET) / max(1, decay_zone)
+            r5 = R5_CAP * max(0.0, 1.0 - decay * 0.5)
+        else:
+            r5 = R5_CAP * (approx_tokens / R5_TOKEN_TARGET)
+        self._r5_history.append(round(r5, 4))
+        return float(r5)
+
     # ------------------------------------------------------------------
     # Episode reward
     # ------------------------------------------------------------------
@@ -146,11 +209,33 @@ class WRRRewardEngine:
         co2_saved_kg = kg_saved * CO2_PER_KG_FOOD_WASTE
         water_saved_litres = kg_saved * WATER_LITRES_PER_KG_FOOD_WASTE
 
+        # r4 / r5 / cooperation aggregates (zero if untouched)
+        r4_total = sum(self._r4_history) if self._r4_history else 0.0
+        r4_mean = (r4_total / len(self._r4_history)) if self._r4_history else 0.0
+        r5_total = sum(self._r5_history) if self._r5_history else 0.0
+        r5_mean = (r5_total / len(self._r5_history)) if self._r5_history else 0.0
+        coop_total = sum(self._cooperation_history) if self._cooperation_history else 0.0
+        coop_mean = (
+            coop_total / len(self._cooperation_history)
+            if self._cooperation_history else 0.0
+        )
+        avg_brief_tokens = (
+            sum(self._brief_token_counts) / len(self._brief_token_counts)
+            if self._brief_token_counts else 0.0
+        )
+
         return {
             "wrr": wrr,
             "r1_pricing": r1_mean,
             "r2_farmer": r2_mean,
             "r3_trend": r3_mean,
+            "r4_plan_adherence_mean": round(r4_mean, 4),
+            "r4_plan_adherence_total": round(r4_total, 4),
+            "r5_reasoning_mean": round(r5_mean, 4),
+            "r5_reasoning_total": round(r5_total, 4),
+            "cooperation_index_mean": round(coop_mean, 4),
+            "cooperation_index_total": round(coop_total, 4),
+            "avg_brief_tokens": round(avg_brief_tokens, 1),
             "brief_quality_score": brief_quality_mean,
             "anti_hack_violations": antihack_count,
             "ticks_completed": self._tick_count,
@@ -283,8 +368,12 @@ class WRRRewardEngine:
         self._r1_history = []
         self._r2_history = []
         self._r3_history = []
+        self._r4_history = []
+        self._r5_history = []
+        self._cooperation_history = []
         self._antihack_violations = []
         self._brief_quality_scores = []
+        self._brief_token_counts = []
         self._tick_count = 0
         self._units_expired_by_category = {}
         self._units_sold_atrisk_by_category = {}
@@ -311,6 +400,10 @@ class WRRRewardEngine:
             "r1_pricing": reward["r1_pricing"],
             "r2_farmer": reward["r2_farmer"],
             "r3_trend": reward["r3_trend"],
+            "r4_plan_adherence_mean": reward["r4_plan_adherence_mean"],
+            "r5_reasoning_mean": reward["r5_reasoning_mean"],
+            "cooperation_index_mean": reward["cooperation_index_mean"],
+            "avg_brief_tokens": reward["avg_brief_tokens"],
             "brief_quality_score": reward["brief_quality_score"],
             "anti_hack_violations": reward["anti_hack_violations"],
             "curriculum_level": curriculum_level,

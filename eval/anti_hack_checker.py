@@ -429,6 +429,95 @@ class AntiHackChecker:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def scan_all_rollouts(rollouts: list) -> dict:
+        """Scan EVERY rollout — including those rejected by buffer gating.
+
+        This closes a notebook-side blind spot: previously the anti-hack
+        scanner was only fed the trajectory buffer, which already
+        filtered out invalid + constitutional-failed episodes. The
+        scanner could never see the worst cases by construction.
+
+        Pass the raw list of rollout result dicts (the same dicts the
+        GRPO trainer returns from ``run_episode``). Each rollout dict is
+        wrapped in a Trajectory shim before scanning.
+
+        Returns the same shape as ``scan_trajectory_buffer`` plus three
+        extra fields: ``buffer_excluded`` (rollouts the buffer would
+        have rejected) and ``hidden_pattern_frequency`` (patterns *only*
+        present in rollouts the buffer rejected — these are the
+        scariest because they would never have been audited otherwise).
+        """
+        from training.trajectory_buffer import Trajectory  # lazy import — circular safe
+
+        buffer_eligible_trajs: list = []
+        rejected_trajs: list = []
+
+        for r in rollouts:
+            traj = Trajectory(
+                episode_num=r.get("episode_num", 0),
+                scenario=r.get("scenario") or "UNKNOWN",
+                wrr=float(r.get("wrr", 0.0)),
+                brief_quality_score=float(r.get("brief_quality_score", 0.0)),
+                constitutional_passed=bool(r.get("constitutional_passed", True)),
+                episode_valid=bool(r.get("episode_valid", True)),
+                briefs=list(r.get("briefs", [])),
+                reward_engine_snapshot=dict(r.get("final_reward", r.get("reward_engine_snapshot", {}))),
+            )
+            if traj.episode_valid and traj.constitutional_passed:
+                buffer_eligible_trajs.append(traj)
+            else:
+                rejected_trajs.append(traj)
+
+        eligible_summary = AntiHackChecker.scan_trajectory_buffer(
+            buffer_eligible_trajs,
+        )
+        rejected_summary = AntiHackChecker.scan_trajectory_buffer(
+            rejected_trajs,
+        )
+
+        # Patterns visible only in rejected rollouts
+        hidden = {
+            ptype: count for ptype, count in rejected_summary["pattern_frequency"].items()
+            if ptype not in eligible_summary["pattern_frequency"]
+        }
+
+        merged_pattern_freq: dict[str, int] = {}
+        for src in (eligible_summary["pattern_frequency"], rejected_summary["pattern_frequency"]):
+            for k, v in src.items():
+                merged_pattern_freq[k] = merged_pattern_freq.get(k, 0) + v
+
+        total = eligible_summary["total_trajectories"] + rejected_summary["total_trajectories"]
+        out = {
+            "total_trajectories": total,
+            "clean": eligible_summary["clean"] + rejected_summary["clean"],
+            "flagged_for_review": (
+                eligible_summary["flagged_for_review"]
+                + rejected_summary["flagged_for_review"]
+            ),
+            "excluded": eligible_summary["excluded"] + rejected_summary["excluded"],
+            "pattern_frequency": merged_pattern_freq,
+            "most_common_pattern": (
+                max(merged_pattern_freq, key=merged_pattern_freq.get)
+                if merged_pattern_freq else "NONE"
+            ),
+            # The reason this scanner exists:
+            "buffer_eligible": eligible_summary["total_trajectories"],
+            "buffer_excluded": rejected_summary["total_trajectories"],
+            "hidden_pattern_frequency": hidden,
+        }
+
+        if rejected_trajs:
+            print(
+                f"\n  Buffer-excluded rollouts scanned: "
+                f"{rejected_summary['total_trajectories']} "
+                f"({rejected_summary['excluded']} would-be-excluded, "
+                f"{rejected_summary['flagged_for_review']} flagged)"
+            )
+            if hidden:
+                print(f"  Patterns ONLY visible in rejected rollouts: {hidden}")
+        return out
+
+    @staticmethod
     def scan_trajectory_buffer(trajectories: list) -> dict:
         """Scan all trajectories and return summary statistics."""
         total = len(trajectories)
@@ -476,10 +565,10 @@ class AntiHackChecker:
             "most_common_pattern": most_common,
         }
 
-        # Print summary
-        print(f"\n{'─' * 40}")
+        # Print summary (ASCII separator so cp1252 Windows consoles don't choke)
+        print(f"\n{'-' * 40}")
         print("Anti-Hack Buffer Scan")
-        print(f"{'─' * 40}")
+        print(f"{'-' * 40}")
         print(f"  Total:     {total}")
         print(f"  Clean:     {clean}")
         print(f"  Flagged:   {flagged}")

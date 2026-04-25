@@ -16,6 +16,7 @@ class BatchStatus(str, Enum):
     EXPIRED = "EXPIRED"
     CLEARED = "CLEARED"
     DONATED = "DONATED"
+    LIQUIDATED = "LIQUIDATED"   # Blinkit-style B2B firesale (see LiquidationEngine)
 
 
 class BatchType(str, Enum):
@@ -77,12 +78,18 @@ class SignalSource(str, Enum):
 
 
 class CurriculumScenario(int, Enum):
-    """Training curriculum levels 0-4."""
-    STABLE_WEEK = 0     # Engine 1 only. Predictable demand.
-    BUSY_WEEKEND = 1    # Engine 1 + Engine 3. Weekend demand surge. 1 trend signal.
-    FARMER_WEEK = 2     # Engine 1 + Engine 2. 3 farmer offers. No trends.
-    TREND_WEEK = 3      # All 3 engines. 2 trend signals. 1 festival day demand spike.
-    CRISIS_WEEK = 4     # All 3 engines simultaneously. The benchmark.
+    """Training curriculum levels 0-5.
+
+    Level 5 (REGULATORY_WEEK) is a Patronus-style schema-drift scenario:
+    the RegulatorAgent rewrites the directive schema multiple times mid-
+    episode, forcing the LLM to read regulator broadcasts and adapt.
+    """
+    STABLE_WEEK = 0       # Engine 1 only. Predictable demand.
+    BUSY_WEEKEND = 1      # Engine 1 + Engine 3. Weekend demand surge.
+    FARMER_WEEK = 2       # Engine 1 + Engine 2. 3 farmer offers. No trends.
+    TREND_WEEK = 3        # All 3 engines. 2 trend signals. 1 festival day.
+    CRISIS_WEEK = 4       # All 3 engines simultaneously. The benchmark.
+    REGULATORY_WEEK = 5   # Continuous schema drift (Patronus AI sub-prize).
 
 
 class WeatherCondition(str, Enum):

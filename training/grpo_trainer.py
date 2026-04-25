@@ -2,6 +2,15 @@
 
 Loads from an SFT checkpoint, runs episodes in the environment, collects
 trajectories, and trains with GRPOTrainer. Logs all metrics to WandB.
+
+Two scenario modes:
+
+  * ``scenario=<one>``: single-scenario run (legacy behaviour — caller
+    drives curriculum across multiple ``run_grpo`` calls).
+  * ``scenarios=[<list>]`` + ``rotate=True``: rotate scenarios per
+    episode within one run so the buffer sees PRICING + FARMER + TREND.
+    Closes the bug where Kaggle runs pinned to STABLE_WEEK left R2-F /
+    R3-T flat-zero, hiding the engine-coverage gap.
 """
 
 from __future__ import annotations
@@ -29,7 +38,7 @@ class FreshPriceGRPOTrainer:
         self,
         checkpoint_dir: str,
         output_dir: str,
-        scenario: CurriculumScenario,
+        scenario: CurriculumScenario | None = None,
         seed: int = 42,
         max_new_tokens: int = 800,
         temperature: float = 0.7,
@@ -37,14 +46,28 @@ class FreshPriceGRPOTrainer:
         batch_size: int = 1,
         gradient_accumulation_steps: int = 8,
         save_every_n_episodes: int = 25,
+        scenarios: list[CurriculumScenario] | None = None,
+        rotate: bool = False,
     ) -> None:
-        self.scenario = scenario
+        # Backwards compat: if only `scenario=` is provided, single-scenario mode.
+        # New: pass `scenarios=[...]` + `rotate=True` to round-robin per episode.
+        if scenarios is not None:
+            self._scenarios: list[CurriculumScenario] = list(scenarios)
+            self._rotate = bool(rotate) or len(self._scenarios) > 1
+            self.scenario = self._scenarios[0]
+        else:
+            if scenario is None:
+                scenario = CurriculumScenario.STABLE_WEEK
+            self._scenarios = [scenario]
+            self._rotate = False
+            self.scenario = scenario
         self.seed = seed
         self.output_dir = output_dir
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
         self.save_every_n_episodes = save_every_n_episodes
         self.rng = random.Random(seed)
+        self._rotation_idx = 0
 
         # Load model and tokenizer with Unsloth
         from unsloth import FastLanguageModel
@@ -131,20 +154,47 @@ class FreshPriceGRPOTrainer:
     # ------------------------------------------------------------------
 
     def run_episode(self, episode_seed: int) -> dict:
-        """Run one complete episode. Returns episode result dict."""
+        """Run one complete episode. Returns episode result dict.
+
+        When ``rotate=True``, picks the next scenario in the list per
+        call so a 6-episode run touches every engine (PRICING / FARMER
+        / TREND) rather than pinning to one. Rebuilds the env to switch
+        scenarios — required because FreshPriceEnv is constructed with
+        a fixed scenario.
+        """
+        scenario = self._next_scenario()
+        if scenario != self.scenario:
+            # Rebuild the env so the new scenario's MarketStateBuilder
+            # and ExternalShockEngine apply correctly.
+            self.scenario = scenario
+            self.env = FreshPriceEnv(
+                scenario=scenario, seed=self.seed, llm_client=self,
+            )
+
         prompt, info = self.env.reset(seed=episode_seed)
         episode_briefs: list[dict] = []
         total_reward = 0.0
         done = False
+        # Engine coverage tracker — surfaces the engine mix in the rollout
+        engine_counts: dict[str, int] = {}
+        parse_failures = 0
+        parse_fail_with_reward = 0
 
         while not done:
             raw_brief = self.generate(prompt)
             prompt, reward, done, truncated, info = self.env.step(raw_brief)
             total_reward += reward
 
+            engine_t = info.get("engine_type", "PRICING")
+            engine_counts[engine_t] = engine_counts.get(engine_t, 0) + 1
+            if not info.get("parse_success", True):
+                parse_failures += 1
+                if reward > 0:
+                    parse_fail_with_reward += 1
+
             episode_briefs.append({
                 "tick": info.get("tick", 0),
-                "engine_type": info.get("engine_type", "PRICING"),
+                "engine_type": engine_t,
                 "raw_response": raw_brief,
                 "quality_score": info.get("quality_score", 0.0),
                 "reward_delta": reward,
@@ -158,6 +208,7 @@ class FreshPriceGRPOTrainer:
         return {
             "episode_num": self.episode_count,
             "scenario": self.scenario,
+            "scenario_name": self.scenario.name,
             "wrr": final_reward.get("wrr", 0.0),
             "r1_pricing": final_reward.get("r1_pricing", 0.0),
             "r2_farmer": final_reward.get("r2_farmer", 0.0),
@@ -169,7 +220,17 @@ class FreshPriceGRPOTrainer:
             "total_reward": total_reward,
             "briefs": episode_briefs,
             "final_reward": final_reward,
+            "engine_counts": engine_counts,
+            "parse_failures": parse_failures,
+            "parse_fail_with_positive_reward": parse_fail_with_reward,
         }
+
+    def _next_scenario(self) -> CurriculumScenario:
+        if not self._rotate:
+            return self.scenario
+        s = self._scenarios[self._rotation_idx % len(self._scenarios)]
+        self._rotation_idx += 1
+        return s
 
     # ------------------------------------------------------------------
     # Main training loop
@@ -227,6 +288,14 @@ class FreshPriceGRPOTrainer:
                 "total_episodes": self.episode_count,
                 "model_checkpoint": self.output_dir,
                 "total_reward": result["total_reward"],
+                # Surfaces engine coverage so a flat-zero R2/R3 column no
+                # longer hides the fact that no FARMER/TREND episodes ran.
+                "engine_PRICING_briefs": result.get("engine_counts", {}).get("PRICING", 0),
+                "engine_FARMER_briefs": result.get("engine_counts", {}).get("FARMER", 0),
+                "engine_TREND_briefs": result.get("engine_counts", {}).get("TREND", 0),
+                "parse_failures": result.get("parse_failures", 0),
+                "parse_fail_with_positive_reward": result.get("parse_fail_with_positive_reward", 0),
+                "scenario_this_episode": result.get("scenario_name", self.scenario.name),
                 **self.trajectory_buffer.get_stats(),
             })
 
@@ -304,26 +373,54 @@ class FreshPriceGRPOTrainer:
 def run_grpo(
     checkpoint_dir: str,
     output_dir: str,
-    scenario: CurriculumScenario,
+    scenario: CurriculumScenario | None = None,
     num_episodes: int = 100,
     seed: int = 42,
     wandb_run_name: str | None = None,
+    scenarios: list[CurriculumScenario] | None = None,
+    rotate: bool = False,
 ) -> str:
-    """Run GRPO training for one curriculum level. Returns checkpoint path."""
-    run_name = wandb_run_name or f"grpo_{scenario.name}_seed{seed}"
-    wandb.init(project="freshprice-ai", name=run_name, config={
-        "scenario": scenario.name,
-        "num_episodes": num_episodes,
-        "seed": seed,
-        "checkpoint": checkpoint_dir,
-    })
+    """Run GRPO training. Returns checkpoint path.
 
-    trainer = FreshPriceGRPOTrainer(
-        checkpoint_dir=checkpoint_dir,
-        output_dir=output_dir,
-        scenario=scenario,
-        seed=seed,
-    )
+    Pass ``scenarios=[STABLE_WEEK, FARMER_WEEK, TREND_WEEK]`` + ``rotate=True``
+    to rotate scenarios per episode within a single GRPO run. This is the
+    recommended path for short Kaggle runs where the curriculum manager
+    won't have time to promote.
+    """
+    if scenarios is not None and rotate:
+        run_name = wandb_run_name or (
+            "grpo_rotate_" + "+".join(s.name for s in scenarios) + f"_seed{seed}"
+        )
+        wandb.init(project="freshprice-ai", name=run_name, config={
+            "scenarios": [s.name for s in scenarios],
+            "rotate": True,
+            "num_episodes": num_episodes,
+            "seed": seed,
+            "checkpoint": checkpoint_dir,
+        })
+        trainer = FreshPriceGRPOTrainer(
+            checkpoint_dir=checkpoint_dir,
+            output_dir=output_dir,
+            scenarios=scenarios,
+            rotate=True,
+            seed=seed,
+        )
+    else:
+        if scenario is None:
+            scenario = CurriculumScenario.STABLE_WEEK
+        run_name = wandb_run_name or f"grpo_{scenario.name}_seed{seed}"
+        wandb.init(project="freshprice-ai", name=run_name, config={
+            "scenario": scenario.name,
+            "num_episodes": num_episodes,
+            "seed": seed,
+            "checkpoint": checkpoint_dir,
+        })
+        trainer = FreshPriceGRPOTrainer(
+            checkpoint_dir=checkpoint_dir,
+            output_dir=output_dir,
+            scenario=scenario,
+            seed=seed,
+        )
 
     final_path = trainer.train(num_episodes)
     wandb.finish()

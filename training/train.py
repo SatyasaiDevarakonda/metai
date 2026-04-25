@@ -50,6 +50,14 @@ def main() -> None:
         "--dpo-every-n-episodes", type=int, default=25,
         help="Run DPO fine-tuning every N episodes within a level",
     )
+    parser.add_argument(
+        "--dpo-min-buffer", type=int, default=2,
+        help=(
+            "Minimum clean trajectories needed before DPO is actually run. "
+            "Lowered from the legacy 10 so short Kaggle runs don't silently "
+            "skip DPO. Increase to 10+ for production runs."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--wandb-project", default="qstoreprice-ai")
     parser.add_argument("--wandb-run-name", default=None)
@@ -231,12 +239,20 @@ def main() -> None:
 
                 # ── DPO EVERY N EPISODES ────────────────────────────────
 
+                # Use the buffer's own readiness check rather than the
+                # legacy hardcoded `>= 10` so short Kaggle runs (where
+                # only 2-3 clean episodes exist) actually trigger DPO.
+                # If you want to keep the old strict policy, pass
+                # --dpo-min-buffer 10 from the CLI.
+                _dpo_ready = trajectory_buffer.dpo_readiness(
+                    min_buffer=getattr(args, "dpo_min_buffer", 2),
+                )
                 if (
                     episodes_this_level > 0
                     and episodes_this_level % args.dpo_every_n_episodes == 0
-                    and len(trajectory_buffer.get_top_n()) >= 10
+                    and _dpo_ready.can_run
                 ):
-                    print(f"\n  [DPO] Running fine-tuning cycle...")
+                    print(f"\n  [DPO] Running fine-tuning cycle... ({_dpo_ready.reason})")
                     dpo_pairs = trajectory_buffer.generate_dpo_pairs(
                         counterfactual_engine,
                     )

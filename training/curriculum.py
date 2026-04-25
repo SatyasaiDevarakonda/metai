@@ -17,8 +17,14 @@ from freshprice_env.enums import CurriculumScenario
 
 logger = logging.getLogger(__name__)
 
-# Maximum curriculum level (CRISIS_WEEK = 4)
-_MAX_LEVEL: int = CurriculumScenario.CRISIS_WEEK.value
+# Maximum curriculum level — derived from the enum so adding REGULATORY_WEEK
+# (level 5) automatically extends the curriculum. Previously hardcoded to
+# CRISIS_WEEK.value which capped progression at 4.
+_MAX_LEVEL: int = max(s.value for s in CurriculumScenario)
+
+# Minimum constitutional pass rate for "eval above promotion" — a high WRR
+# alone is no longer sufficient. Tuned to mirror the reward.py audit floor.
+EVAL_PROMOTION_CONSTITUTIONAL_FLOOR: float = 0.60
 
 
 @dataclass
@@ -141,6 +147,78 @@ class CurriculumManager:
     # ------------------------------------------------------------------
     # Status reporting
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def is_eval_above_promotion(
+        eval_episodes: list,
+        wrr_threshold: float = CURRICULUM_PROMOTION_WRR_THRESHOLD,
+        constitutional_pass_rate_floor: float = EVAL_PROMOTION_CONSTITUTIONAL_FLOOR,
+    ) -> tuple[bool, dict]:
+        """Combined WRR + constitutional-pass-rate gate.
+
+        The notebook used to print "ABOVE PROMOTION THRESHOLD" using only
+        the mean WRR. That hid the fact that 3 of 4 eval episodes were
+        constitutionally failing. This helper makes the gate explicit:
+
+          - mean WRR >= ``wrr_threshold``
+          - AND constitutional pass rate >= ``constitutional_pass_rate_floor``
+
+        ``eval_episodes`` accepts either a list of EvalEpisodeResult /
+        EpisodeResult objects (with ``.wrr`` and ``.constitutional_passed``)
+        or a list of dicts with the same keys. Returns ``(passes, diagnostics)``
+        so the caller can print *why* it failed when it does.
+        """
+        if not eval_episodes:
+            return False, {
+                "n": 0, "wrr_mean": 0.0,
+                "constitutional_pass_rate": 0.0,
+                "wrr_ok": False, "constitution_ok": False,
+                "reason": "no eval episodes",
+            }
+
+        wrrs: list[float] = []
+        n_const_pass = 0
+        for ep in eval_episodes:
+            wrr = (
+                ep.get("wrr") if isinstance(ep, dict) else getattr(ep, "wrr", 0.0)
+            )
+            const = (
+                ep.get("constitutional_passed") if isinstance(ep, dict)
+                else getattr(ep, "constitutional_passed", True)
+            )
+            wrrs.append(float(wrr or 0.0))
+            n_const_pass += 1 if const else 0
+
+        wrr_mean = sum(wrrs) / len(wrrs)
+        const_rate = n_const_pass / len(eval_episodes)
+        wrr_ok = wrr_mean >= wrr_threshold
+        const_ok = const_rate >= constitutional_pass_rate_floor
+
+        diag = {
+            "n": len(eval_episodes),
+            "wrr_mean": round(wrr_mean, 4),
+            "wrr_threshold": wrr_threshold,
+            "wrr_ok": wrr_ok,
+            "constitutional_pass_rate": round(const_rate, 3),
+            "constitutional_floor": constitutional_pass_rate_floor,
+            "constitution_ok": const_ok,
+        }
+        if not wrr_ok and not const_ok:
+            diag["reason"] = (
+                f"WRR {wrr_mean:.3f} < {wrr_threshold} AND "
+                f"constitutional pass {const_rate:.0%} < "
+                f"{constitutional_pass_rate_floor:.0%}"
+            )
+        elif not wrr_ok:
+            diag["reason"] = f"WRR {wrr_mean:.3f} < {wrr_threshold}"
+        elif not const_ok:
+            diag["reason"] = (
+                f"constitutional pass {const_rate:.0%} < "
+                f"{constitutional_pass_rate_floor:.0%}"
+            )
+        else:
+            diag["reason"] = "above both thresholds"
+        return (wrr_ok and const_ok), diag
 
     def get_status(self) -> dict:
         """Return a dict suitable for WandB logging and terminal display."""
