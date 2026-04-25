@@ -7,30 +7,30 @@
 #   pip install -r requirements.txt
 
 # ── CORE RL + LLM ─────────────────────────────────────────────────
-torch==2.2.1
-transformers==4.40.0
-trl==0.8.6
-peft==0.10.0
+torch>=2.2.1
+transformers>=4.40.0
+trl>=0.8.6
+peft>=0.10.0
 # unsloth==2024.4          # Installed separately — see instructions above
-accelerate==0.29.3
-bitsandbytes==0.43.1
-datasets==2.19.0
-tokenizers==0.19.1
+accelerate>=0.29.3
+bitsandbytes>=0.43.1
+datasets>=2.19.0
+tokenizers>=0.19.1
 
 # ── ENVIRONMENT ───────────────────────────────────────────────────
-gymnasium==0.29.1
+gymnasium>=0.29.1,<1.0     # v1.x has a breaking API change; keep on 0.x
 openenv-core>=0.2.0
 pydantic>=2.0.0
 
 # ── EXPERIMENT TRACKING ───────────────────────────────────────────
-wandb==0.16.6
+wandb>=0.17.0              # 0.17.0 fixes np.float_ removal in NumPy 2.0
 
 # ── UTILITIES ─────────────────────────────────────────────────────
-numpy==1.26.4
-pandas==2.2.1
-scipy==1.13.0
-tqdm==4.66.2
-python-dotenv==1.0.1
+numpy>=1.26.0
+pandas>=2.2.1
+scipy>=1.13.0
+tqdm>=4.66.2
+python-dotenv>=1.0.1
 
 # ── DEVELOPMENT + TESTING ─────────────────────────────────────────
 pytest==8.1.0
