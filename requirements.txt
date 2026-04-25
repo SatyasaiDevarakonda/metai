@@ -1,7 +1,23 @@
-gradio>=4.0
-matplotlib>=3.7
+# QStorePrice runtime dependencies (env + FastAPI dashboard).
+# Heavy training-only deps (transformers, peft, unsloth, torch) live in
+# requirements_training.txt — install that on top of this for SFT/GRPO/DPO
+# or for AGENT_BACKEND=local.
+
+# Core env
 gymnasium>=0.29.1
 numpy>=1.26.0
-openai>=1.0.0
 pydantic>=2.0.0
+
+# OpenEnv contract
 openenv-core>=0.2.0
+
+# FastAPI dashboard server
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27          # used by fastapi.testclient for the smoke tests
+
+# Agent runtime backends
+openai>=1.0.0        # AGENT_BACKEND=hf_inference uses the OpenAI-compatible client
+
+# Plot rendering for the RL learning-curve cell
+matplotlib>=3.7

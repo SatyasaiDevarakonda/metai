@@ -41,11 +41,17 @@ from freshprice_env.agents.competitor_store_agent import (
     CompetitorPersona,
     CompetitorStoreAgent,
 )
+from freshprice_env.agents.consumer_cohort_agent import ConsumerCohortAgent
 from freshprice_env.agents.farmer_agent import (
     FarmerAgent,
     build_default_farmer_pool,
 )
 from freshprice_env.agents.regulator_agent import RegulatorAgent
+from freshprice_env.engines.liquidation_engine import (
+    LiquidationEngine,
+    parse_liquidate_directive,
+)
+from freshprice_env.engines.rider_pool_engine import RiderPoolEngine
 from freshprice_env.brief_pipeline.schema_registry import (
     SchemaRegistry,
     default_registry,
@@ -130,6 +136,8 @@ class MarketCommonsEnv(gym.Env):
         episode_id: str | None = None,
         enable_regulator: bool = True,
         schema_registry: SchemaRegistry | None = None,
+        enable_blinkit: bool = False,
+        rider_count: int | None = None,
     ) -> None:
         super().__init__()
         self.scenario = scenario
@@ -195,6 +203,33 @@ class MarketCommonsEnv(gym.Env):
         self._last_seq: int = 0
         self._last_step_messages: list[dict] = []
 
+        # ------------------------------------------------------------------
+        # Blinkit layer (Theme #1 quick-commerce realism). Opt-in: when
+        # enabled, after the hero env steps we (a) pass the deltas in
+        # batch.quantity_remaining to a RiderPoolEngine to compute
+        # r6_delivery_quality, (b) parse LIQUIDATE actions out of the
+        # PRICING directive and run them through a LiquidationEngine to
+        # compute r7_liquidation, and (c) ask a ConsumerCohortAgent for
+        # per-cohort retention given the rider's average ETA. Both reward
+        # components flow into the env's reward + info dict.
+        # ------------------------------------------------------------------
+        self._enable_blinkit = bool(enable_blinkit)
+        self._rider_pool: RiderPoolEngine | None = None
+        self._liquidation: LiquidationEngine | None = None
+        self._cohort_agent: ConsumerCohortAgent | None = None
+        if self._enable_blinkit:
+            from freshprice_env.constants import BLINKIT_DEFAULT_RIDER_COUNT
+            self._rider_pool = RiderPoolEngine(
+                rider_count=rider_count or BLINKIT_DEFAULT_RIDER_COUNT,
+            )
+            self._liquidation = LiquidationEngine()
+            self._cohort_agent = ConsumerCohortAgent(
+                rng=random.Random(seed + 7000),
+            )
+        self._prev_quantities: dict[str, int] = {}
+        self._r6_episode_total: float = 0.0
+        self._r7_episode_total: float = 0.0
+
     # ------------------------------------------------------------------
     # Reset
     # ------------------------------------------------------------------
@@ -213,6 +248,15 @@ class MarketCommonsEnv(gym.Env):
         self._last_hero_action_kind = None
         self._last_step_messages = []
         self._regulatory_events = []
+
+        # Reset Blinkit layer
+        self._prev_quantities = self._snapshot_batch_quantities()
+        self._r6_episode_total = 0.0
+        self._r7_episode_total = 0.0
+        if self._enable_blinkit and self._rider_pool is not None:
+            self._rider_pool = RiderPoolEngine(rider_count=self._rider_pool.rider_count)
+        if self._enable_blinkit and self._liquidation is not None:
+            self._liquidation = LiquidationEngine()
         if self._enable_regulator and self._regulator is not None:
             # Reset registry to v1 and re-build the regulator with the
             # current scenario's schedule
@@ -330,6 +374,19 @@ class MarketCommonsEnv(gym.Env):
         new_msg_dicts = [m.to_dict() for m in new_messages]
         self._last_step_messages = new_msg_dicts
 
+        # --- 5b. Blinkit layer ----------------------------------------
+        # When enabled, compute r6_delivery_quality (rider pool) and
+        # r7_liquidation (B2B firesale) on top of the hero reward, and
+        # populate the info dict with rider/cohort/liquidation snapshots
+        # for the dashboard's Simulation Theater.
+        blinkit_info = self._tick_blinkit_layer(action) if self._enable_blinkit else None
+        if blinkit_info is not None:
+            r6 = blinkit_info["r6_delivery_quality"]
+            r7 = blinkit_info["r7_liquidation"]
+            self._r6_episode_total += r6
+            self._r7_episode_total += r7
+            reward = float(reward) + r6 + r7
+
         info.update({
             "episode_id": self._episode_id,
             "mode": "market_commons",
@@ -347,6 +404,8 @@ class MarketCommonsEnv(gym.Env):
                 "TREND": self._registry.active_version(BriefEngineType.TREND),
             } if self._enable_regulator else None,
         })
+        if blinkit_info is not None:
+            info.update(blinkit_info)
 
         # Augment obs with the MARKET COMMONS prompt block for next brief
         if not terminated:
@@ -395,6 +454,132 @@ class MarketCommonsEnv(gym.Env):
             "regulatory_events": list(self._regulatory_events),
         })
         return s
+
+    # ------------------------------------------------------------------
+    # Blinkit layer helpers
+    # ------------------------------------------------------------------
+
+    def _snapshot_batch_quantities(self) -> dict[str, int]:
+        """Read current ``quantity_remaining`` for every active batch.
+
+        Used to compute sales deltas across a brief: if a batch had 50
+        units before the hero step and 42 after, 8 units sold this brief
+        and the rider pool needs to ferry one or more orders for them.
+        """
+        if self._hero._state is None:
+            return {}
+        return {
+            b.batch_id: int(getattr(b, "quantity_remaining", 0))
+            for b in self._hero._state.batches
+        }
+
+    def _tick_blinkit_layer(self, action: str) -> dict:
+        """Run the Blinkit-style mechanics on top of the hero step.
+
+        Returns a dict slated to be merged into the env's info dict with
+        keys: r6_delivery_quality, r7_liquidation, rider_pool, cohorts,
+        liquidation, plus the per-episode running totals.
+        """
+        assert self._rider_pool is not None
+        assert self._liquidation is not None
+        assert self._cohort_agent is not None
+
+        # 1. Sales deltas per batch over this brief.
+        new_quantities = self._snapshot_batch_quantities()
+        sales_this_brief: dict[str, int] = {}
+        for bid, prev in self._prev_quantities.items():
+            now = new_quantities.get(bid, 0)
+            sold = max(0, prev - now)
+            if sold > 0:
+                sales_this_brief[bid] = sold
+        self._prev_quantities = new_quantities
+
+        # 2. Rider pool tick. Use the hero's current_tick so freshness
+        #    clocks decay correctly relative to env time.
+        batches_by_id = {
+            b.batch_id: b for b in (self._hero._state.batches if self._hero._state else [])
+        }
+        rider_events = self._rider_pool.tick(
+            current_tick=self._hero._current_tick,
+            sales_this_tick=sales_this_brief,
+            batches_by_id=batches_by_id,
+            rng=self._rng,
+        )
+
+        # 3. Liquidation: parse LIQUIDATE actions from the brief and
+        #    execute against the hero's batches.
+        liq_decisions = self._extract_liquidate_decisions(action)
+        liq_results = self._liquidation.execute(
+            liq_decisions, batches_by_id, self._rng,
+        )
+
+        # 4. Consumer cohort retention given the rider's avg ETA.
+        if self._hero._state is not None:
+            cohort_boosts = self._cohort_agent.act(
+                self._hero._state,
+                avg_eta_minutes=self._rider_pool.stats.avg_eta_minutes,
+            )
+            cohort_obs = self._cohort_agent.observe(
+                self._hero._state,
+                avg_eta_minutes=self._rider_pool.stats.avg_eta_minutes,
+            )
+        else:
+            cohort_boosts, cohort_obs = {}, {}
+
+        # 5. Compute brief rewards and reset per-brief stats.
+        r6 = self._rider_pool.compute_brief_reward()
+        r7 = self._liquidation.compute_brief_reward()
+        rider_snapshot = self._rider_pool.snapshot()
+        liquidation_snapshot = self._liquidation.snapshot()
+        self._rider_pool.reset_brief_stats()
+        self._liquidation.reset_brief()
+
+        # Surface saturation events on the bus so the dashboard sees them.
+        for ev in rider_events:
+            if ev.get("kind") == "rider_saturated":
+                try:
+                    self._bus.post(
+                        tick=self._hero._current_tick,
+                        sender_id="env",
+                        verb=MessageVerb.BROADCAST,
+                        body=f"rider pool saturated: queue={ev.get('queue_depth')}",
+                        payload=ev,
+                    )
+                except Exception:  # noqa: BLE001 — bus shouldn't crash the step
+                    pass
+
+        return {
+            "r6_delivery_quality": round(r6, 4),
+            "r7_liquidation": round(r7, 4),
+            "r6_episode_total": round(self._r6_episode_total + r6, 4),
+            "r7_episode_total": round(self._r7_episode_total + r7, 4),
+            "rider_pool": rider_snapshot,
+            "liquidation": {
+                "this_brief": liquidation_snapshot.get("this_brief", []),
+                "total_recovered_rs": liquidation_snapshot.get("total_recovered_rs", 0.0),
+                "total_reckless": liquidation_snapshot.get("total_reckless", 0),
+            },
+            "cohorts": cohort_obs,
+            "cohort_demand_boosts": cohort_boosts,
+            "rider_events": rider_events,
+            "sales_this_brief": sales_this_brief,
+        }
+
+    @staticmethod
+    def _extract_liquidate_decisions(brief_text: str):
+        """Pull LIQUIDATE actions out of the brief's PRICING DIRECTIVE.
+
+        Reuses the same BriefParser the rest of the pipeline uses, so
+        the regex for finding the JSON block matches the production
+        contract instead of being a one-off here.
+        """
+        from freshprice_env.brief_pipeline.parser import BriefParser
+        from freshprice_env.enums import BriefEngineType
+        result = BriefParser.parse(brief_text, BriefEngineType.PRICING)
+        if not result.success or not result.brief:
+            return []
+        directive = result.brief.get("directive_dict") or result.brief.get("directive") or {}
+        return parse_liquidate_directive(directive)
 
     # ------------------------------------------------------------------
     # Internal helpers

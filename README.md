@@ -127,7 +127,7 @@ python -c "from freshprice_env.market_commons_env import MarketCommonsEnv; \
            env = MarketCommonsEnv(scenario=CurriculumScenario.CRISIS_WEEK); \
            obs, info = env.reset(); print(info['mode'])"
 
-# Run all tests (46 of them, ~1s)
+# Run all tests (49 of them, ~1s)
 python -m unittest discover tests -v
 ```
 
@@ -174,10 +174,12 @@ Diagnostic endpoints once the server is up:
 
 ---
 
-## 5. The five reward components
+## 5. The eight reward components
 
 WRR remains the headline KPI. The expanded reward signal exposes more of *why*
-the agent behaves the way it does:
+the agent behaves the way it does. r6 and r7 only appear when
+`MarketCommonsEnv(enable_blinkit=True)` — they're the Blinkit/Zepto-style
+quick-commerce realism layer:
 
 | Component | Source | What it measures |
 |---|---|---|
@@ -186,6 +188,8 @@ the agent behaves the way it does:
 | `r3_trend` | TrendEngine | Restock decisions; penalises paid-promo gullibility |
 | `r4_plan_adherence` | AgentNotebook | Honored commitments − broken commitments |
 | `r5_reasoning_tokens` | Reward engine | Capped, quality-gated token-scaled reward (Mercor) |
+| `r6_delivery_quality` | RiderPoolEngine | On-time deliveries minus transit spoilage (Blinkit) |
+| `r7_liquidation` | LiquidationEngine | Legitimate B2B firesale minus reckless dumping |
 | `cooperation_index` | MarketCommonsEnv | Pareto-improving exchanges with other agents |
 
 ---

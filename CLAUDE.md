@@ -41,7 +41,7 @@ pip install -r requirements.txt
 # Install training extras (GPU required for unsloth)
 pip install -r requirements_training.txt
 
-# Tests (29 tests — all should pass on CPU)
+# Tests (49 tests — all should pass on CPU; needs gymnasium installed)
 python -m unittest discover tests -v
 
 # Run training pipeline

@@ -237,6 +237,14 @@ class BriefParser:
 def _validate_pricing_action(action: dict) -> bool:
     if "batch_id" not in action:
         return False
+    # Blinkit-style LIQUIDATE action ({"action": "LIQUIDATE", "batch_id": ...,
+    # "channel": "B2B"}) takes a different shape from a standard pricing
+    # action: it has no price_multiplier because it removes the batch
+    # entirely. The LiquidationEngine validates urgency / anti-hack
+    # downstream, so the parser only needs to confirm the shape is a
+    # known one.
+    if str(action.get("action", "")).upper() == "LIQUIDATE":
+        return True
     pm = action.get("price_multiplier")
     if pm is None or not isinstance(pm, (int, float)):
         return False

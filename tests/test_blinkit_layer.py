@@ -141,5 +141,73 @@ class TestLiquidationEngine(unittest.TestCase):
         self.assertEqual(decisions[0].channel, "B2B")
 
 
+class TestMarketCommonsEnvWiring(unittest.TestCase):
+    """Regression tests proving the Blinkit layer is reachable through
+    MarketCommonsEnv.step() and not just isolated unit tests."""
+
+    def _make_env(self, *, enable_blinkit: bool):
+        from freshprice_env.market_commons_env import MarketCommonsEnv
+        from freshprice_env.enums import CurriculumScenario
+        from freshprice_env.persistence.reputation_store import ReputationStore
+        return MarketCommonsEnv(
+            scenario=CurriculumScenario.STABLE_WEEK, seed=42,
+            reputation_store=ReputationStore(":memory:"),
+            enable_blinkit=enable_blinkit,
+        )
+
+    @staticmethod
+    def _fallback_brief():
+        return (
+            "SITUATION: ok.\n\n"
+            "SIGNAL ANALYSIS: N/A\n\n"
+            "VIABILITY CHECK: N/A\n\n"
+            "RECOMMENDATION: hold.\n\n"
+            "DIRECTIVE:\n"
+            '{"engine": "PRICING", "actions": []}\n\n'
+            "CONFIDENCE: MEDIUM"
+        )
+
+    def test_default_disabled_no_r6_r7_keys(self):
+        env = self._make_env(enable_blinkit=False)
+        obs, info = env.reset()
+        obs, reward, done, t, info = env.step(self._fallback_brief())
+        self.assertNotIn("r6_delivery_quality", info)
+        self.assertNotIn("r7_liquidation", info)
+        self.assertNotIn("rider_pool", info)
+
+    def test_enabled_populates_r6_r7_and_snapshots(self):
+        env = self._make_env(enable_blinkit=True)
+        obs, info = env.reset()
+        obs, reward, done, t, info = env.step(self._fallback_brief())
+        self.assertIn("r6_delivery_quality", info)
+        self.assertIn("r7_liquidation", info)
+        self.assertIn("rider_pool", info)
+        self.assertIn("cohorts", info)
+        self.assertEqual(len(info["cohorts"].get("cohorts", [])), 3)
+        # No LIQUIDATE -> r7 must be exactly 0 (not flagged, not credited).
+        self.assertEqual(info["r7_liquidation"], 0.0)
+
+    def test_reckless_liquidate_negative_r7_through_env(self):
+        import json
+        env = self._make_env(enable_blinkit=True)
+        obs, info = env.reset()
+        batch_id = env.hero._state.batches[0].batch_id  # FRESH/WATCH at start
+        directive = {"engine": "PRICING",
+                     "actions": [{"action": "LIQUIDATE", "batch_id": batch_id}]}
+        brief = (
+            "SITUATION: reckless liquidate test.\n\n"
+            "SIGNAL ANALYSIS: N/A\n\n"
+            "VIABILITY CHECK: N/A\n\n"
+            "RECOMMENDATION: attempt to dump fresh stock; engine should flag.\n\n"
+            f"DIRECTIVE:\n{json.dumps(directive)}\n\n"
+            "CONFIDENCE: MEDIUM"
+        )
+        obs, reward, done, t, info = env.step(brief)
+        self.assertTrue(info.get("parse_success"))
+        self.assertLess(info["r7_liquidation"], 0.0)
+        results = (info.get("liquidation") or {}).get("this_brief", [])
+        self.assertTrue(results and results[0]["reckless"])
+
+
 if __name__ == "__main__":
     unittest.main()
