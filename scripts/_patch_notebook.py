@@ -1093,6 +1093,178 @@ else:
 """
 
 
+CELL_SES_CURVE_MD = """\
+## Section 13c -- SES learning curve (FreshPrice strategy headline metric)
+
+The Store Efficiency Score (SES) is the headline reward in the
+FreshPrice strategy: SES = sum(w_i * r_i) for the 7 engines, with
+strategy-defined weights summing to 1.0. The curriculum-promotion
+threshold is SES >= 0.70 over 5 consecutive evaluation episodes.
+
+This cell plots:
+  Panel A : SES per episode  (the curve judges should look at first)
+  Panel B : Per-engine reward stack (r1..r7) per episode
+  Panel C : SES vs WRR scatter -- proves they are correlated but not
+            identical (SES captures the multi-engine decision quality
+            that WRR alone misses)
+
+The cell reuses the `episode_results` list populated by the GRPO
+rollout cell, which now records r1..r7 + store_efficiency_score per
+episode.
+"""
+
+CELL_SES_CURVE_CODE = """\
+# ============================================================
+# CELL 13c -- SES LEARNING CURVE (FreshPrice strategy headline)
+# Run AFTER the GRPO rollout cell. Plots SES per episode + the
+# per-engine reward stack so judges can see the 7-engine training
+# signal end-to-end.
+# ============================================================
+
+import os
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+
+os.makedirs(PLOTS_DIR, exist_ok=True)
+
+ep_results = list(episode_results) if 'episode_results' in dir() else []
+if not ep_results:
+    print('SKIP: episode_results is empty. Run the GRPO rollout cell (11) first.')
+else:
+    eps = list(range(1, len(ep_results) + 1))
+    ses_curve = [r.get('store_efficiency_score', 0.0) for r in ep_results]
+    wrr_curve = [r.get('wrr', 0.0) for r in ep_results]
+    scenarios = [r.get('scenario_name', '?') for r in ep_results]
+    SCEN_COLORS = {
+        'STABLE_WEEK':    '#3b82f6',
+        'BUSY_WEEKEND':   '#0ea5e9',
+        'FARMER_WEEK':    '#10b981',
+        'TREND_WEEK':     '#f59e0b',
+        'CRISIS_WEEK':    '#ef4444',
+        'REGULATORY_WEEK':'#a855f7',
+    }
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig.suptitle('FreshPrice 7-Engine SES Learning Curve',
+                 fontsize=15, fontweight='bold', y=1.00)
+
+    # --- Panel A: SES per episode ---
+    axA = axes[0]
+    colors = [SCEN_COLORS.get(s, '#9ca3af') for s in scenarios]
+    axA.plot(eps, ses_curve, color='#374151', alpha=0.5, lw=2, zorder=1)
+    axA.scatter(eps, ses_curve, c=colors, s=100, edgecolor='white',
+                lw=1.5, zorder=2)
+    axA.axhline(0.70, color='#dc2626', ls='--', lw=1.2, alpha=0.7,
+                label='promotion threshold (SES = 0.70)')
+    axA.set_title('A. Store Efficiency Score per episode', fontsize=12)
+    axA.set_xlabel('Episode'); axA.set_ylabel('SES')
+    axA.legend(fontsize=8, loc='lower right')
+    axA.grid(alpha=0.3)
+    handles = [mpatches.Patch(color=c, label=s)
+               for s, c in SCEN_COLORS.items() if s in scenarios]
+    if handles:
+        axA.legend(handles=[axA.lines[-1]] + handles, fontsize=7,
+                   loc='lower right', ncol=2)
+
+    # --- Panel B: per-engine reward stack ---
+    axB = axes[1]
+    width = 0.8
+    bottoms = [0.0] * len(eps)
+    palette = {
+        'r1_pricing':    '#60a5fa',
+        'r2_farmer':     '#34d399',
+        'r3_trend':      '#fbbf24',
+        'r4_intrafleet': '#a78bfa',
+        'r5_micromfg':   '#f87171',
+        'r6_event':      '#22d3ee',
+        'r7_surplusbox': '#facc15',
+    }
+    for key, colour in palette.items():
+        vals = [max(0.0, r.get(key, 0.0)) for r in ep_results]   # clip negatives for stack
+        axB.bar(eps, vals, width, bottom=bottoms, label=key, color=colour)
+        bottoms = [b + v for b, v in zip(bottoms, vals)]
+    axB.set_title('B. Reward stack: r1..r7 per episode', fontsize=12)
+    axB.set_xlabel('Episode'); axB.set_ylabel('reward contribution')
+    axB.legend(fontsize=7, loc='upper left', ncol=2)
+    axB.grid(alpha=0.3, axis='y')
+
+    # --- Panel C: SES vs WRR scatter ---
+    axC = axes[2]
+    axC.scatter(wrr_curve, ses_curve, c=colors, s=80,
+                edgecolor='white', lw=1.2)
+    axC.set_title('C. SES vs WRR (per episode)', fontsize=12)
+    axC.set_xlabel('WRR'); axC.set_ylabel('SES')
+    axC.grid(alpha=0.3)
+
+    plt.tight_layout()
+    out_path = os.path.join(PLOTS_DIR, 'ses_learning_curve.png')
+    plt.savefig(out_path, dpi=140, bbox_inches='tight',
+                facecolor='white', edgecolor='none')
+    print(f'Saved SES learning curve to {out_path}')
+    plt.show()
+
+    # Headline summary line.
+    mean_ses = sum(ses_curve) / len(ses_curve)
+    last_third = ses_curve[-max(1, len(ses_curve)//3):]
+    mean_ses_late = sum(last_third) / len(last_third)
+    print()
+    print(f'Mean SES over all {len(ep_results)} episodes : {mean_ses:+.3f}')
+    print(f'Mean SES over last third               : {mean_ses_late:+.3f}')
+    print(f'Promotion threshold                    : 0.700 '
+          f'({\"REACHED\" if mean_ses_late >= 0.70 else \"NOT YET\"} on late-third mean)')
+"""
+
+
+CELL_SES_PER_SCENARIO_MD = """\
+## Section 13e -- SES per scenario (curriculum diagnostic)
+
+Mean SES split by scenario (STABLE_WEEK / BUSY_WEEKEND / FARMER_WEEK
+/ TREND_WEEK / CRISIS_WEEK / REGULATORY_WEEK). The strategy promotes
+the agent to the next scenario when SES >= 0.70 for 5 consecutive
+evaluation episodes; this cell tells you which scenarios are above
+that threshold and which are still below.
+
+The active engines per scenario come from
+`freshprice_env.enums.active_engines` -- see the cell-inventory
+output (Section 5c) for the full map.
+"""
+
+CELL_SES_PER_SCENARIO_CODE = """\
+# ============================================================
+# CELL 13e -- SES per scenario (curriculum diagnostic)
+# ============================================================
+
+import sys
+sys.path.insert(0, REPO_DIR)
+
+from collections import defaultdict
+from freshprice_env.enums import CurriculumScenario, active_engines
+
+ep_results = list(episode_results) if 'episode_results' in dir() else []
+if not ep_results:
+    print('SKIP: episode_results empty. Run the GRPO rollout cell (11) first.')
+else:
+    by_scenario = defaultdict(list)
+    for r in ep_results:
+        by_scenario[r.get('scenario_name', '?')].append(r.get('store_efficiency_score', 0.0))
+
+    print(f'{\"Scenario\":<18s} {\"Episodes\":>10} {\"Mean SES\":>10} '
+          f'{\"Best\":>8} {\"Worst\":>8}  {\"Active engines\":<25}  Promotion?')
+    print('-' * 100)
+    for s in CurriculumScenario:
+        ses_list = by_scenario.get(s.name, [])
+        if not ses_list:
+            continue
+        mean = sum(ses_list) / len(ses_list)
+        best = max(ses_list)
+        worst = min(ses_list)
+        engines = sorted(active_engines(s))
+        promotion = 'PROMOTE' if mean >= 0.70 else 'BELOW THRESHOLD'
+        print(f'{s.name:<18s} {len(ses_list):>10} {mean:>+10.3f} '
+              f'{best:>+8.3f} {worst:>+8.3f}  {str(engines):<25}  {promotion}')
+"""
+
+
 CELL_USE_WEIGHTS_MD = """\
 ## Section 13 -- Use Your Trained Weights in the Dashboard
 
@@ -1188,6 +1360,104 @@ print("    GET  http://localhost:8000/commons/sim_frames (frames the theater pla
 # model card links back to the same place.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# 7-engines SES upgrades to existing notebook cells.
+# Surgical string replacements that surface r4-r7 + store_efficiency_score
+# in the GRPO rollouts, RL learning curve, and eval cells. Idempotent.
+# ---------------------------------------------------------------------------
+
+SEVEN_ENGINES_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    # ----- Cell 11 (cell-grpo-rollouts) --------------------------------
+    # 1. Initialise per-episode r4-r7 + SES accumulators alongside the
+    #    existing parse-failure counters.
+    (
+        "        ep_briefs = []\n"
+        "        done = False\n"
+        "        step_count = 0\n"
+        "        parse_failures = 0\n"
+        "        parse_fail_with_reward = 0",
+        "        ep_briefs = []\n"
+        "        done = False\n"
+        "        step_count = 0\n"
+        "        parse_failures = 0\n"
+        "        parse_fail_with_reward = 0\n"
+        "        # 7-engines SES (FreshPrice strategy Section 7) - r4-r7 + SES\n"
+        "        # are populated by env.step() into the per-step info dict.\n"
+        "        # Accumulate them across the episode so we can store the\n"
+        "        # episode mean alongside the existing r1/r2/r3/WRR fields.\n"
+        "        ep_r4_total = ep_r5_total = ep_r6_total = ep_r7_total = ep_ses_total = 0.0\n"
+        "        ep_brief_count = 0"
+    ),
+    # 2. Inside the while loop, add per-step accumulation right after the
+    #    engine_coverage bump.
+    (
+        '            engine_t = info.get("engine_type", "PRICING")\n'
+        "            engine_coverage[engine_t] = engine_coverage.get(engine_t, 0) + 1",
+        '            engine_t = info.get("engine_type", "PRICING")\n'
+        "            engine_coverage[engine_t] = engine_coverage.get(engine_t, 0) + 1\n"
+        "            # 7-engines SES path: r4-r7 + SES are per-brief floats in info.\n"
+        '            ep_r4_total += float(info.get("r4_intrafleet", 0.0))\n'
+        '            ep_r5_total += float(info.get("r5_micromfg", 0.0))\n'
+        '            ep_r6_total += float(info.get("r6_event", 0.0))\n'
+        '            ep_r7_total += float(info.get("r7_surplusbox", 0.0))\n'
+        '            ep_ses_total += float(info.get("store_efficiency_score", 0.0))\n'
+        "            ep_brief_count += 1"
+    ),
+    # 3. Compute episode-mean r4-r7 + SES right after the legacy
+    #    final_reward dict is unpacked.
+    (
+        '        wrr = float(final_reward.get("wrr", 0.0))\n'
+        '        r1 = float(final_reward.get("r1_pricing", 0.0))\n'
+        '        r2 = float(final_reward.get("r2_farmer", 0.0))\n'
+        '        r3 = float(final_reward.get("r3_trend", 0.0))',
+        '        wrr = float(final_reward.get("wrr", 0.0))\n'
+        '        r1 = float(final_reward.get("r1_pricing", 0.0))\n'
+        '        r2 = float(final_reward.get("r2_farmer", 0.0))\n'
+        '        r3 = float(final_reward.get("r3_trend", 0.0))\n'
+        "        # 7-engines SES means (per-brief mean across the episode)\n"
+        "        n_briefs = max(1, ep_brief_count)\n"
+        "        r4 = ep_r4_total / n_briefs\n"
+        "        r5 = ep_r5_total / n_briefs\n"
+        "        r6 = ep_r6_total / n_briefs\n"
+        "        r7 = ep_r7_total / n_briefs\n"
+        "        ses = ep_ses_total / n_briefs"
+    ),
+    # 4. Add r4-r7 + ses to the result dict.
+    (
+        '            "r3_trend":               r3,\n'
+        '            "brief_quality_score":    quality,',
+        '            "r3_trend":               r3,\n'
+        '            "r4_intrafleet":          r4,\n'
+        '            "r5_micromfg":            r5,\n'
+        '            "r6_event":               r6,\n'
+        '            "r7_surplusbox":          r7,\n'
+        '            "store_efficiency_score": ses,\n'
+        '            "brief_quality_score":    quality,'
+    ),
+    # 5. Update the column header to include an SES column.
+    (
+        'print(f"{\'Ep\':>4} {\'Scenario\':>14} {\'WRR\':>6} {\'R1-P\':>6} {\'R2-F\':>6} {\'R3-T\':>6} "\n'
+        '      f"{\'Qual\':>6} {\'Viol\':>5} {\'Const\':>6} {\'PFail\':>5} {\'Time\':>6}")',
+        'print(f"{\'Ep\':>4} {\'Scenario\':>14} {\'WRR\':>6} {\'SES\':>6} {\'R1-P\':>6} {\'R2-F\':>6} {\'R3-T\':>6} "\n'
+        '      f"{\'R4\':>6} {\'R5\':>6} {\'R6\':>6} {\'R7\':>6} {\'Qual\':>6} {\'Viol\':>5} {\'Const\':>6} {\'PFail\':>5} {\'Time\':>6}")'
+    ),
+    # 6. Update the per-episode print line to include SES + r4-r7.
+    (
+        '        print(\n'
+        '            f"{ep_idx+1:>4} {scenario.name:>14} {wrr:>6.3f} {r1:>6.3f} {r2:>6.3f} "\n'
+        '            f"{r3:>6.3f} {quality:>6.3f} {violations:>5} {const_str:>6} "\n'
+        '            f"{parse_fail_with_reward:>5} {elapsed:>5.0f}s"\n'
+        '        )',
+        '        print(\n'
+        '            f"{ep_idx+1:>4} {scenario.name:>14} {wrr:>6.3f} {ses:>6.3f} {r1:>6.3f} {r2:>6.3f} "\n'
+        '            f"{r3:>6.3f} {r4:>6.3f} {r5:>6.3f} {r6:>6.3f} {r7:>6.3f} "\n'
+        '            f"{quality:>6.3f} {violations:>5} {const_str:>6} "\n'
+        '            f"{parse_fail_with_reward:>5} {elapsed:>5.0f}s"\n'
+        '        )'
+    ),
+)
+
+
 REPO_RENAME_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     # Clone URL (with and without .git suffix)
     ("https://github.com/nandeshkanagaraju/QStorePrice.git",
@@ -1248,6 +1518,19 @@ def main() -> None:
     insert_cell_after(nb, after_cell_id="cell-rl-learning-curve-md",
                       new_cell_id="cell-rl-learning-curve",
                       cell_type="code", source=CELL_13B_CODE)
+    # FreshPrice strategy headline: SES learning curve + per-scenario.
+    insert_cell_after(nb, after_cell_id="cell-rl-learning-curve",
+                      new_cell_id="cell-ses-curve-md",
+                      cell_type="markdown", source=CELL_SES_CURVE_MD)
+    insert_cell_after(nb, after_cell_id="cell-ses-curve-md",
+                      new_cell_id="cell-ses-curve",
+                      cell_type="code", source=CELL_SES_CURVE_CODE)
+    insert_cell_after(nb, after_cell_id="cell-ses-curve",
+                      new_cell_id="cell-ses-per-scenario-md",
+                      cell_type="markdown", source=CELL_SES_PER_SCENARIO_MD)
+    insert_cell_after(nb, after_cell_id="cell-ses-per-scenario-md",
+                      new_cell_id="cell-ses-per-scenario",
+                      cell_type="code", source=CELL_SES_PER_SCENARIO_CODE)
     insert_cell_after(nb, after_cell_id="cell-hf-push",
                       new_cell_id="cell-use-weights-md",
                       cell_type="markdown", source=CELL_USE_WEIGHTS_MD)
@@ -1324,12 +1607,14 @@ def main() -> None:
         nb["cells"][grpo_idx]["outputs"] = []
         nb["cells"][grpo_idx]["execution_count"] = None
 
+    seven_engines_touched = replace_in_all_cells(nb, SEVEN_ENGINES_REPLACEMENTS)
     rename_touched = replace_in_all_cells(nb, REPO_RENAME_REPLACEMENTS)
 
     NOTEBOOK.write_text(json.dumps(nb, indent=1, ensure_ascii=False), encoding="utf-8")
     print(f"Patched: {NOTEBOOK}")
     print(f"Total cells: {len(nb['cells'])}")
-    print(f"Cells rewritten by repo-rename pass: {rename_touched}")
+    print(f"Cells rewritten by 7-engines SES pass: {seven_engines_touched}")
+    print(f"Cells rewritten by repo-rename pass:   {rename_touched}")
 
 
 if __name__ == "__main__":
