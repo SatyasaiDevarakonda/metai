@@ -83,3 +83,20 @@ class CurriculumScenario(int, Enum):
     FARMER_WEEK = 2     # Engine 1 + Engine 2. 3 farmer offers. No trends.
     TREND_WEEK = 3      # All 3 engines. 2 trend signals. 1 festival day demand spike.
     CRISIS_WEEK = 4     # All 3 engines simultaneously. The benchmark.
+
+
+class WeatherCondition(str, Enum):
+    """External weather conditions that affect store footfall and demand."""
+    NORMAL = "NORMAL"
+    SUNNY = "SUNNY"
+    RAINY = "RAINY"   # Reduces footfall 25%
+    HOT = "HOT"       # Spikes cold-fruit demand, suppresses heavy dairy
+    COLD = "COLD"     # Drives bakery/comfort foods
+
+
+class ExternalEvent(str, Enum):
+    """Local events that create demand spikes."""
+    NONE = "NONE"
+    FESTIVAL = "FESTIVAL"         # 2-2.5x demand on produce + dairy
+    SPORTS_EVENT = "SPORTS_EVENT" # Packaged + dairy spike
+    LOCAL_HOLIDAY = "LOCAL_HOLIDAY"  # General 1.3x footfall boost

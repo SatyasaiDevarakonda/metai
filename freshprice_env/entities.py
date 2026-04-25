@@ -21,9 +21,11 @@ from freshprice_env.enums import (
     BatchStatus,
     BatchType,
     ExpiryUrgency,
+    ExternalEvent,
     FarmerOfferStatus,
     SignalSource,
     TrendAction,
+    WeatherCondition,
 )
 
 # ---------------------------------------------------------------------------
@@ -139,6 +141,11 @@ class SimulatedMarketState:
     notification_credits: dict[str, int]
     at_risk_cost_accumulator: float
     revenue_recovered_accumulator: float
+    # External shocks — set by ExternalShockEngine each tick
+    weather_condition: WeatherCondition = WeatherCondition.NORMAL
+    active_event: ExternalEvent = ExternalEvent.NONE
+    # Consumer demand boost — set by ConsumerAgent each tick (multi-agent mode)
+    consumer_demand_boost: dict[str, float] = field(default_factory=dict)
 
     @property
     def day_of_week(self) -> int:

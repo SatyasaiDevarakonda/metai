@@ -41,6 +41,7 @@ from freshprice_env.enums import (
     SignalSource,
     TrendAction,
 )
+from freshprice_env.external_shocks import ExternalShockEngine
 from freshprice_env.market_state import MarketStateBuilder
 from freshprice_env.reward import WRRRewardEngine
 
@@ -94,6 +95,7 @@ class FreshPriceEnv(gym.Env):
         self._farmer_engine: FarmerEngine | None = None
         self._trend_engine: TrendEngine | None = None
         self._reward_engine: WRRRewardEngine | None = None
+        self._shock_engine: ExternalShockEngine | None = None
         self._state: SimulatedMarketState | None = None
 
         # Episode tracking
@@ -131,6 +133,7 @@ class FreshPriceEnv(gym.Env):
         self._farmer_engine = FarmerEngine(self.rng)
         self._trend_engine = TrendEngine(self.rng)
         self._reward_engine = WRRRewardEngine()
+        self._shock_engine = ExternalShockEngine(self.scenario, self.rng)
 
         # Reset tick counters
         self._current_tick = 0
@@ -288,6 +291,11 @@ class FreshPriceEnv(gym.Env):
 
             r2_action = 0.0
             r3_action = 0.0
+
+            # a0. Update external shock state and write to market state
+            shock = self._shock_engine.tick(tick)
+            self._state.weather_condition = shock.weather
+            self._state.active_event = shock.event
 
             # a. Apply trend demand boost (every tick)
             self._state = self._trend_engine.apply_trend_demand_boost(self._state)
@@ -675,6 +683,8 @@ class FreshPriceEnv(gym.Env):
             "risk_buffer_balance": self._state.risk_buffer_balance,
             "engine_type": self._last_engine_type.value if self._last_engine_type else "PRICING",
             "episode_complete": self._current_tick >= TOTAL_TICKS,
+            "weather": self._state.weather_condition.value,
+            "event": self._state.active_event.value,
         }
 
     # ------------------------------------------------------------------

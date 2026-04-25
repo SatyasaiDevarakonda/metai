@@ -173,3 +173,71 @@ FESTIVAL_DEMAND_MULTIPLIER: float = 2.5
 
 # Supplier delay: reduces incoming stock by this fraction
 SUPPLIER_DELAY_STOCK_FRACTION: float = 0.3
+
+# ---------------------------------------------------------------------------
+# Carbon footprint (Suggestion 3)
+# ---------------------------------------------------------------------------
+CO2_PER_KG_FOOD_WASTE: float = 2.5          # kg CO2 per kg food wasted (WRAP UK estimate)
+WATER_LITRES_PER_KG_FOOD_WASTE: float = 1000.0  # litres wasted per kg food wasted
+
+# Average weight per unit per category (kg)
+CATEGORY_AVG_WEIGHT_KG: dict[str, float] = {
+    "fruits":      0.30,
+    "vegetables":  0.20,
+    "dairy":       0.50,
+    "mushrooms":   0.15,
+    "leafy_greens": 0.10,
+    "herbs":       0.05,
+    "bakery":      0.25,
+    "packaged":    0.40,
+}
+
+# Average retail price per unit per category (Rs) — used for units-sold estimation
+CATEGORY_AVG_PRICE_RS: dict[str, float] = {
+    "fruits":      65.0,
+    "vegetables":  37.5,
+    "dairy":       70.0,
+    "mushrooms":   37.5,
+    "leafy_greens": 25.0,
+    "herbs":       25.0,
+    "bakery":      50.0,
+    "packaged":   105.0,
+}
+
+# ---------------------------------------------------------------------------
+# Weather shocks (Suggestion 7)
+# ---------------------------------------------------------------------------
+WEATHER_RAIN_DEMAND_MULTIPLIER: float = 0.75        # rain reduces footfall
+WEATHER_HOT_FRUITS_MULTIPLIER: float = 1.25         # heat spikes cold-fruit demand
+WEATHER_HOT_DAIRY_MULTIPLIER: float = 0.85          # heat suppresses heavy dairy
+WEATHER_COLD_BAKERY_DAIRY_MULTIPLIER: float = 1.15  # cold drives warm/comfort foods
+
+# Festival demand multipliers by category
+FESTIVAL_DEMAND_MULTIPLIERS: dict[str, float] = {
+    "fruits":      2.5,
+    "dairy":       2.0,
+    "herbs":       1.8,
+    "vegetables":  1.5,
+    "bakery":      2.2,
+    "packaged":    1.3,
+    "mushrooms":   1.4,
+    "leafy_greens": 1.3,
+}
+
+# Sports-event demand spike (packaged snacks, dairy)
+SPORTS_EVENT_PACKAGED_MULTIPLIER: float = 1.4
+SPORTS_EVENT_DAIRY_MULTIPLIER: float = 1.2
+
+# ---------------------------------------------------------------------------
+# Multi-store coordination (Suggestion 5)
+# ---------------------------------------------------------------------------
+INTER_STORE_TRANSFER_COST_RS_PER_KG: float = 5.0   # cold-chain transfer cost
+INTER_STORE_MAX_TRANSFER_PCT: float = 0.30          # max 30% of batch can be transferred
+MIN_UNITS_FOR_TRANSFER: int = 5                     # minimum transfer threshold
+
+# ---------------------------------------------------------------------------
+# Long-horizon mode (Theme #2)
+# ---------------------------------------------------------------------------
+LONG_HORIZON_DAYS: int = 28
+LONG_HORIZON_TICKS: int = LONG_HORIZON_DAYS * TICKS_PER_DAY   # 2688
+SPARSE_REWARD_INTERVAL_DAYS: int = 7               # reward paid weekly, not per-brief

@@ -34,7 +34,7 @@ except ImportError as exc:
         "openenv-core is not installed. Run: pip install openenv-core"
     ) from exc
 
-from freshprice_env.openenv_adapter import BriefAction, BriefObservation, FreshPriceOpenEnv
+from server.environment import BriefAction, BriefObservation, FreshPriceOpenEnv
 
 # create_fastapi_app takes a factory callable (not an instance) so that the
 # session layer can construct per-session envs, plus explicit Action/Observation

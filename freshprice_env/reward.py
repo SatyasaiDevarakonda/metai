@@ -15,7 +15,11 @@ This class:
 from __future__ import annotations
 
 from freshprice_env.constants import (
+    CATEGORY_AVG_PRICE_RS,
+    CATEGORY_AVG_WEIGHT_KG,
+    CO2_PER_KG_FOOD_WASTE,
     TREND_COOLDOWN_HRS,
+    WATER_LITRES_PER_KG_FOOD_WASTE,
 )
 from freshprice_env.entities import SimulatedMarketState
 
@@ -37,6 +41,9 @@ class WRRRewardEngine:
         self._antihack_violations: list[dict] = []
         self._brief_quality_scores: list[float] = []
         self._tick_count: int = 0
+        # Carbon footprint tracking
+        self._units_expired_by_category: dict[str, int] = {}
+        self._units_sold_atrisk_by_category: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Per-tick recording
@@ -74,6 +81,18 @@ class WRRRewardEngine:
             "detail": detail,
         })
 
+    def record_expired_units(self, category: str, units: int) -> None:
+        """Called by PricingEngine when units expire unsold."""
+        self._units_expired_by_category[category] = (
+            self._units_expired_by_category.get(category, 0) + units
+        )
+
+    def record_sold_atrisk_units(self, category: str, units: int) -> None:
+        """Called by PricingEngine when at-risk units are sold before expiry."""
+        self._units_sold_atrisk_by_category[category] = (
+            self._units_sold_atrisk_by_category.get(category, 0) + units
+        )
+
     def record_brief_quality(self, quality_score: float) -> None:
         """Called after each Operating Brief is generated and scored.
 
@@ -108,6 +127,25 @@ class WRRRewardEngine:
         antihack_count = len(self._antihack_violations)
         episode_valid = antihack_count <= CONSTITUTIONAL_MAX_VIOLATIONS
 
+        # --- Carbon footprint ---
+        kg_wasted = sum(
+            count * CATEGORY_AVG_WEIGHT_KG.get(cat, 0.25)
+            for cat, count in self._units_expired_by_category.items()
+        )
+        kg_saved = sum(
+            count * CATEGORY_AVG_WEIGHT_KG.get(cat, 0.25)
+            for cat, count in self._units_sold_atrisk_by_category.items()
+        )
+        # Fallback: estimate from WRR if engine didn't report unit-level data
+        if kg_saved == 0.0 and state.at_risk_cost_accumulator > 0.0:
+            avg_price = sum(CATEGORY_AVG_PRICE_RS.values()) / len(CATEGORY_AVG_PRICE_RS)
+            avg_weight = sum(CATEGORY_AVG_WEIGHT_KG.values()) / len(CATEGORY_AVG_WEIGHT_KG)
+            estimated_units_sold = state.revenue_recovered_accumulator / avg_price
+            kg_saved = estimated_units_sold * avg_weight
+
+        co2_saved_kg = kg_saved * CO2_PER_KG_FOOD_WASTE
+        water_saved_litres = kg_saved * WATER_LITRES_PER_KG_FOOD_WASTE
+
         return {
             "wrr": wrr,
             "r1_pricing": r1_mean,
@@ -117,6 +155,10 @@ class WRRRewardEngine:
             "anti_hack_violations": antihack_count,
             "ticks_completed": self._tick_count,
             "episode_valid": episode_valid,
+            "kg_food_saved": round(kg_saved, 2),
+            "kg_food_wasted": round(kg_wasted, 2),
+            "co2_saved_kg": round(co2_saved_kg, 2),
+            "water_saved_litres": round(water_saved_litres, 1),
         }
 
     # ------------------------------------------------------------------
@@ -244,6 +286,8 @@ class WRRRewardEngine:
         self._antihack_violations = []
         self._brief_quality_scores = []
         self._tick_count = 0
+        self._units_expired_by_category = {}
+        self._units_sold_atrisk_by_category = {}
 
     # ------------------------------------------------------------------
     # WandB logging
@@ -273,6 +317,9 @@ class WRRRewardEngine:
             "episode_num": episode_num,
             "episode_valid": reward["episode_valid"],
             "constitutional_passed": audit["passed"],
+            "kg_food_saved": reward["kg_food_saved"],
+            "co2_saved_kg": reward["co2_saved_kg"],
+            "water_saved_litres": reward["water_saved_litres"],
         }
 
     # ------------------------------------------------------------------
