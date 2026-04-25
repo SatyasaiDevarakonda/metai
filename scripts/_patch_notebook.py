@@ -853,6 +853,154 @@ print(\"\\nLongHorizon + Negotiation smokes PASSED.\")
 """
 
 
+CELL_RL_EXPLAINER_MD = """\
+## Section 9 -- What's actually RL here? (read this first)
+
+It is fair to look at the cells above and ask "where is the RL?" --
+SFT (cell 9) is imitation learning, the "GRPO Episode Rollouts" cell
+generates briefs but does not call ``loss.backward()``, and DPO is
+preference learning. Here is the honest pipeline:
+
+| Stage | Cell | What it actually does | Is it RL? |
+|---|---|---|---|
+| 1. SFT | 9 | Teacher-forcing on 6-section briefs | No -- imitation |
+| 2. Rollouts | 11 | Generate briefs in env, score with WRR + r1..r7 | No -- inference |
+| 3a. **REINFORCE+KL** | **9b (new below)** | Policy-gradient update from env reward | **Yes -- on-policy RL** |
+| 3b. DPO | 12 | Contrastive loss on (chosen, rejected) brief pairs | RLHF-adjacent (preference learning, not classical RL) |
+
+Cell 9b is the missing policy-gradient step. It uses the trajectories
+the rollout cell already collected, computes:
+
+      advantage = (reward - mean) / std
+      policy_loss = -advantage * log pi_theta(brief | prompt)
+      kl_loss     =  beta * (log pi_theta - log pi_ref)
+      loss        =  policy_loss + kl_loss
+
+and runs ``loss.backward()`` + ``optimizer.step()`` -- the textbook
+REINFORCE algorithm with a KL penalty against the frozen SFT
+reference. The KL keeps the policy from drifting too far; the
+log-pi ratio is computed by toggling the LoRA adapter on/off so we do
+not need a second model in VRAM.
+
+After 9b runs you can compare WRR before vs after on a held-out
+scenario (last block of the cell) to see whether the policy gradient
+moved the agent in a useful direction. If WRR drops, dial ``kl_beta``
+up or ``lr`` down; if it does not move, dial them the other way.
+"""
+
+
+CELL_RL_REINFORCE_CODE = """\
+# ============================================================
+# CELL 9b -- ACTUAL RL GRADIENT UPDATE (REINFORCE+KL)
+# Runs after the GRPO rollout cell (cell 11) populates
+# trajectory_buffer. Uses the collected (prompt, brief, WRR) tuples to
+# do a real policy-gradient update on the SFT/LoRA model. KL penalty
+# against the frozen SFT reference keeps it from collapsing.
+# Plots the per-step loss + KL so you can see learning happen.
+# ============================================================
+
+import os, sys
+sys.path.insert(0, REPO_DIR)
+
+# Guard: this cell only runs after rollouts are collected.
+if 'trajectory_buffer' not in dir() or trajectory_buffer is None:
+    print('SKIP: trajectory_buffer is not populated. '
+          'Run the GRPO rollout cell (11) first.')
+elif 'model' not in dir() or model is None:
+    print('SKIP: SFT model is not in scope. '
+          'Run the SFT training cell (9) first.')
+else:
+    from training.reinforce_trainer import run_reinforce_kl, collect_samples
+
+    samples = collect_samples(trajectory_buffer)
+    print(f'Collected {len(samples)} (prompt, brief, reward) tuples '
+          f'from trajectory_buffer.')
+
+    if len(samples) == 0:
+        print('SKIP: trajectory buffer is empty. The rollout cell may '
+              'have rejected every episode (look at the buffer-admission '
+              'funnel in cell 13b for the breakdown).')
+    else:
+        # Conservative T4-safe defaults; bump n_epochs / max_samples on
+        # bigger boxes for stronger updates.
+        REINFORCE_LR        = 5e-6
+        REINFORCE_KL_BETA   = 0.05
+        REINFORCE_EPOCHS    = 1
+        REINFORCE_GRAD_ACC  = 4
+        REINFORCE_MAX_SEQ   = 1024
+        REINFORCE_MAX_SAMPS = min(48, len(samples))
+
+        live_history = []
+        def _on_step(stats):
+            live_history.append(stats)
+            print(f'  step={stats.step:3d}  loss={stats.loss:+.4f}  '
+                  f'policy={stats.policy_loss:+.4f}  '
+                  f'kl={stats.kl:+.4f}  '
+                  f'mean_adv={stats.mean_advantage:+.3f}')
+
+        print()
+        print(f'Running REINFORCE+KL: epochs={REINFORCE_EPOCHS} '
+              f'lr={REINFORCE_LR} kl_beta={REINFORCE_KL_BETA} '
+              f'grad_accum={REINFORCE_GRAD_ACC} max_samples={REINFORCE_MAX_SAMPS}')
+        print('-' * 70)
+
+        model, history = run_reinforce_kl(
+            model, tokenizer, trajectory_buffer,
+            n_epochs=REINFORCE_EPOCHS,
+            lr=REINFORCE_LR,
+            kl_beta=REINFORCE_KL_BETA,
+            grad_accum=REINFORCE_GRAD_ACC,
+            max_seq_len=REINFORCE_MAX_SEQ,
+            max_samples=REINFORCE_MAX_SAMPS,
+            progress_callback=_on_step,
+        )
+        print('-' * 70)
+        print(f'Done. {len(history)} optimizer steps.')
+
+        # Plot the loss + KL curves.
+        try:
+            import matplotlib.pyplot as plt
+            steps    = [h.step for h in history]
+            losses   = [h.loss for h in history]
+            policies = [h.policy_loss for h in history]
+            kls      = [h.kl for h in history]
+            fig, axes = plt.subplots(1, 3, figsize=(16, 4))
+            axes[0].plot(steps, losses, marker='o', color='#6366f1')
+            axes[0].set_title('REINFORCE total loss (lower = better policy)')
+            axes[0].set_xlabel('optimizer step'); axes[0].set_ylabel('loss')
+            axes[0].grid(alpha=0.3); axes[0].axhline(0, color='#888', lw=0.5)
+            axes[1].plot(steps, policies, marker='s', color='#10b981')
+            axes[1].set_title('Policy-gradient term  (-advantage * log pi)')
+            axes[1].set_xlabel('optimizer step'); axes[1].grid(alpha=0.3)
+            axes[1].axhline(0, color='#888', lw=0.5)
+            axes[2].plot(steps, kls, marker='^', color='#f59e0b')
+            axes[2].set_title('KL(theta || ref)  (drift from SFT)')
+            axes[2].set_xlabel('optimizer step'); axes[2].grid(alpha=0.3)
+            axes[2].axhline(0, color='#888', lw=0.5)
+            plt.tight_layout()
+            os.makedirs(PLOTS_DIR, exist_ok=True)
+            out = os.path.join(PLOTS_DIR, 'reinforce_curve.png')
+            plt.savefig(out, dpi=120, bbox_inches='tight',
+                        facecolor='white', edgecolor='none')
+            print(f'Saved REINFORCE curve to {out}')
+            plt.show()
+        except Exception as e:
+            print(f'(plotting skipped: {e})')
+
+        # Update the checkpoint pointer so DPO (cell 12) starts from the
+        # RL-updated model, not the SFT one.
+        REINFORCE_DIR = f'{CHECKPOINTS_DIR}/reinforce_v1'
+        try:
+            model.save_pretrained_merged(REINFORCE_DIR, tokenizer,
+                                         save_method='merged_16bit')
+            CURRENT_CHECKPOINT = REINFORCE_DIR
+            print(f'Saved RL-updated model to {REINFORCE_DIR}')
+            print(f'CURRENT_CHECKPOINT now points there.')
+        except Exception as e:
+            print(f'(skipped checkpoint save: {e})')
+"""
+
+
 CELL_USE_WEIGHTS_MD = """\
 ## Section 13 -- Use Your Trained Weights in the Dashboard
 
@@ -993,6 +1141,15 @@ def main() -> None:
 
     replace_cell_source(nb, "cell-sft-generate", CELL_8A_NEW)
     patch_grpo_cell(nb)
+    # REINFORCE+KL — the actual policy-gradient RL step. Inserted between
+    # the rollout cell and the DPO cell so the order is:
+    #   SFT -> rollouts -> REINFORCE+KL (real RL) -> DPO -> RL learning curves
+    insert_cell_after(nb, after_cell_id="cell-grpo-rollouts",
+                      new_cell_id="cell-rl-explainer-md",
+                      cell_type="markdown", source=CELL_RL_EXPLAINER_MD)
+    insert_cell_after(nb, after_cell_id="cell-rl-explainer-md",
+                      new_cell_id="cell-rl-reinforce",
+                      cell_type="code", source=CELL_RL_REINFORCE_CODE)
     insert_cell_after(nb, after_cell_id="cell-dpo",
                       new_cell_id="cell-rl-learning-curve-md",
                       cell_type="markdown", source=CELL_13B_MD)
