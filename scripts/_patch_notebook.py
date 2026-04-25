@@ -505,6 +505,57 @@ print("    GET  http://localhost:8000/commons/sim_frames (frames the theater pla
 """
 
 
+# ---------------------------------------------------------------------------
+# Repo-rename rewrites: nandeshkanagaraju/QStorePrice -> SatyasaiDevarakonda/metai
+#
+# When the repo moved to the user's own GitHub (https://github.com/
+# SatyasaiDevarakonda/metai) the notebook still pointed at the old fork's
+# clone URL and laid the working tree under /kaggle/working/QStorePrice.
+# These swaps make the notebook self-consistent with the new repo: it
+# clones from `metai`, lays the tree at /kaggle/working/metai, and the HF
+# model card links back to the same place.
+# ---------------------------------------------------------------------------
+
+REPO_RENAME_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    # Clone URL (with and without .git suffix)
+    ("https://github.com/nandeshkanagaraju/QStorePrice.git",
+     "https://github.com/SatyasaiDevarakonda/metai.git"),
+    ("https://github.com/nandeshkanagaraju/QStorePrice",
+     "https://github.com/SatyasaiDevarakonda/metai"),
+    # Working-tree path inside Kaggle (REPO_DIR uses /kaggle/working/<name>)
+    ('f"{WORK_DIR}/QStorePrice"', 'f"{WORK_DIR}/metai"'),
+    # Stand-alone "Cloning QStorePrice repository..." print
+    ("Cloning QStorePrice repository...",
+     "Cloning metai repository (QStorePrice codebase)..."),
+)
+
+
+def replace_in_all_cells(nb: dict, replacements: tuple[tuple[str, str], ...]) -> int:
+    """Apply a list of (old, new) string replacements across every cell source.
+
+    Returns the number of cells touched.
+    """
+    touched = 0
+    for cell in nb["cells"]:
+        src = cell.get("source")
+        if isinstance(src, list):
+            joined = "".join(src)
+        else:
+            joined = src or ""
+        new_joined = joined
+        for old, new in replacements:
+            if old in new_joined:
+                new_joined = new_joined.replace(old, new)
+        if new_joined != joined:
+            cell["source"] = _split_lines(new_joined)
+            cell["outputs"] = cell.get("outputs", []) if cell.get("cell_type") == "code" else cell.get("outputs", [])
+            if cell.get("cell_type") == "code":
+                cell["outputs"] = []
+                cell["execution_count"] = None
+            touched += 1
+    return touched
+
+
 def main() -> None:
     nb = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
 
@@ -523,9 +574,12 @@ def main() -> None:
                       new_cell_id="cell-use-weights",
                       cell_type="code", source=CELL_USE_WEIGHTS_CODE)
 
+    rename_touched = replace_in_all_cells(nb, REPO_RENAME_REPLACEMENTS)
+
     NOTEBOOK.write_text(json.dumps(nb, indent=1, ensure_ascii=False), encoding="utf-8")
     print(f"Patched: {NOTEBOOK}")
     print(f"Total cells: {len(nb['cells'])}")
+    print(f"Cells rewritten by repo-rename pass: {rename_touched}")
 
 
 if __name__ == "__main__":
