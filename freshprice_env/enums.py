@@ -78,18 +78,46 @@ class SignalSource(str, Enum):
 
 
 class CurriculumScenario(int, Enum):
-    """Training curriculum levels 0-5.
+    """Training curriculum levels 0-5 per FreshPrice strategy Section 8.
 
-    Level 5 (REGULATORY_WEEK) is a Patronus-style schema-drift scenario:
-    the RegulatorAgent rewrites the directive schema multiple times mid-
-    episode, forcing the LLM to read regulator broadcasts and adapt.
+    Engine activations per scenario (strategy Section 8 "Five Training
+    Scenarios"):
+
+      STABLE_WEEK     = Engine 1 only. Predictable demand baseline.
+      BUSY_WEEKEND    = Engines 1 + 4 + 6. Demand surge + multi-store +
+                        nearby event.
+      FARMER_WEEK     = Engines 1 + 2 + 5. Three farmer offers + micro-
+                        manufacturer routing needed.
+      TREND_WEEK      = Engines 1 + 3 + 7. Two social trends + surplus
+                        box + a festival day.
+      CRISIS_WEEK     = All 7 engines simultaneously. The benchmark.
+      REGULATORY_WEEK = Continuous schema drift (Patronus AI sub-prize)
+                        on top of CRISIS_WEEK loadings.
     """
-    STABLE_WEEK = 0       # Engine 1 only. Predictable demand.
-    BUSY_WEEKEND = 1      # Engine 1 + Engine 3. Weekend demand surge.
-    FARMER_WEEK = 2       # Engine 1 + Engine 2. 3 farmer offers. No trends.
-    TREND_WEEK = 3        # All 3 engines. 2 trend signals. 1 festival day.
-    CRISIS_WEEK = 4       # All 3 engines simultaneously. The benchmark.
-    REGULATORY_WEEK = 5   # Continuous schema drift (Patronus AI sub-prize).
+    STABLE_WEEK = 0
+    BUSY_WEEKEND = 1
+    FARMER_WEEK = 2
+    TREND_WEEK = 3
+    CRISIS_WEEK = 4
+    REGULATORY_WEEK = 5
+
+
+# Per-scenario active engine map -- used by the prompt builder, the
+# curriculum manager, and the eval scripts. Keys are 1..7 matching the
+# strategy's r1..r7 numbering.
+ACTIVE_ENGINES_BY_SCENARIO: dict[int, frozenset[int]] = {
+    CurriculumScenario.STABLE_WEEK.value:     frozenset({1}),
+    CurriculumScenario.BUSY_WEEKEND.value:    frozenset({1, 4, 6}),
+    CurriculumScenario.FARMER_WEEK.value:     frozenset({1, 2, 5}),
+    CurriculumScenario.TREND_WEEK.value:      frozenset({1, 3, 7}),
+    CurriculumScenario.CRISIS_WEEK.value:     frozenset({1, 2, 3, 4, 5, 6, 7}),
+    CurriculumScenario.REGULATORY_WEEK.value: frozenset({1, 2, 3, 4, 5, 6, 7}),
+}
+
+
+def active_engines(scenario: "CurriculumScenario") -> frozenset[int]:
+    """Return the set of engine IDs (1..7) active in this scenario."""
+    return ACTIVE_ENGINES_BY_SCENARIO.get(int(scenario), frozenset())
 
 
 class WeatherCondition(str, Enum):

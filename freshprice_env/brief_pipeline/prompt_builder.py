@@ -69,6 +69,29 @@ class OperatingBriefPromptBuilder:
         "TREND DIRECTIVE schema:\n"
         '{"engine": "TREND", "actions": [{"category": "<category>", "decision": "<APPROVE|DECLINE>", '
         '"order_quantity_kg": <float or null>}]}\n'
+        "\n"
+        "OPTIONAL SIDE DIRECTIVES (FreshPrice 7-engine SES). Add any of\n"
+        "the following keys *inside the same DIRECTIVE JSON object* to\n"
+        "exercise Engines 4-7. Each is optional and contributes to its\n"
+        "own SES component (r4..r7) when present.\n"
+        "\n"
+        "Engine 4 - Intra-Fleet Rebalancing (TRANSFER between stores):\n"
+        '"intrafleet_actions": [{"source_store": "<id>", "dest_store": "<id>", '
+        '"batch_id": "<id>", "units": <int>}]\n'
+        "\n"
+        "Engine 5 - Micro-Manufacturer Pipeline (route near-expiry to processor):\n"
+        '"micromfg_actions": [{"batch_id": "<id>", "processor": "<name>", '
+        '"floor_price": <float or null>}]   '
+        "(only on batches with hours_to_expiry <= 12)\n"
+        "\n"
+        "Engine 6 - Event Pre-Positioning (pre-stock for detected event):\n"
+        '"event_actions": [{"category": "<category>", '
+        '"quantity_units": <int>, "target_event_tick": <int>}]   '
+        "(must be 4-48 hours ahead of the event)\n"
+        "\n"
+        "Engine 7 - Surplus Box (Friday weekly assembly):\n"
+        '"surplus_box_actions": [{"batch_id": "<id>", "units": <int>}]   '
+        "(target weight 1.5-2.0 kg)\n"
     )
 
     @staticmethod

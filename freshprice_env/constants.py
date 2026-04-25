@@ -279,9 +279,71 @@ COOPERATION_INDEX_MESSAGE_WEIGHT: float = 0.25
 COOPERATION_INDEX_PARETO_WEIGHT: float = 0.40
 
 # ---------------------------------------------------------------------------
-# Blinkit/Zepto-style quick-commerce mechanics
-# These tighten the simulation so the LLM has to reason about throughput,
-# cohort heterogeneity, and dead-stock liquidation, not just price.
+# FRESHPRICE 7-ENGINE REWARD WEIGHTS (Store Efficiency Score = SES)
+# Source: FreshPrice_Strategy.docx Section 7. SES = sum(w_i * r_i).
+# Used as primary curriculum-promotion metric (SES >= 0.70 over 5 evals).
+# ---------------------------------------------------------------------------
+
+SES_WEIGHT_R1_PRICING:    float = 0.28   # Engine 1 - daily pricing decisions
+SES_WEIGHT_R2_FARMER:     float = 0.18   # Engine 2 - farmer offer accept/decline
+SES_WEIGHT_R3_TREND:      float = 0.15   # Engine 3 - social-trend purchase orders
+SES_WEIGHT_R4_INTRAFLEET: float = 0.12   # Engine 4 - inter-store transfers
+SES_WEIGHT_R5_MICROMFG:   float = 0.10   # Engine 5 - micro-manufacturer routing
+SES_WEIGHT_R6_EVENT:      float = 0.10   # Engine 6 - event pre-positioning
+SES_WEIGHT_R7_SURPLUSBOX: float = 0.07   # Engine 7 - weekly surplus box
+
+# Sanity: weights sum to 1.0 - verified at module load by tests.
+
+# ---------------------------------------------------------------------------
+# Engine 4 - Intra-Fleet Rebalancing (TRANSFER directive). Multi-store only.
+# r4_intrafleet = revenue_recovered / waste_prevented - transfer_cost. The
+# multi-store engine already exists in multi_store_env.py; these are the
+# reward shaping constants used in r4 computation.
+# ---------------------------------------------------------------------------
+R4_TRANSFER_COST_PENALTY_PER_KG: float = 0.05   # opportunity cost per kg ferried
+R4_TRANSFER_REVENUE_BONUS:       float = 0.20   # per unit sold post-transfer
+R4_RECKLESS_TRANSFER_PENALTY:    float = 0.30   # transfer that wastes the source
+
+# ---------------------------------------------------------------------------
+# Engine 5 - Micro-Manufacturer Pipeline. Routes near-expiry batches to
+# registered processors (juice bars, pickle makers, bakeries) for partial
+# revenue recovery instead of zero-revenue spoilage.
+# r5 = recovered_rs / (batch_cost * unsold_fraction). Floor: 30% recovery
+# is positive reward vs. zero for waste.
+# ---------------------------------------------------------------------------
+MICROMFG_RECOVERY_RATIO_DEFAULT: float = 0.35   # processor pays ~35% of cost
+MICROMFG_HOURS_TO_EXPIRY_FLOOR:  float = 12.0   # eligible window: <=12 hrs
+R5_LATE_ROUTING_PENALTY:         float = 0.25   # routed too late to use
+R5_EARLY_ROUTING_PENALTY:        float = 0.30   # routed when discount could clear
+
+# ---------------------------------------------------------------------------
+# Engine 6 - Event Pre-Positioning. Pre-stocks for detected events.
+# r6 = event_day_revenue_uplift / baseline; bonus on zero stockouts;
+# penalty if pre-stock spoils unsold.
+# ---------------------------------------------------------------------------
+EVENT_PRESTOCK_LEAD_HOURS_MIN:    float = 4.0    # min hrs ahead to count as "pre"
+EVENT_PRESTOCK_LEAD_HOURS_MAX:    float = 48.0   # supplier lead time cap
+R6_EVENT_NO_STOCKOUT_BONUS:       float = 0.30   # full coverage bonus
+R6_EVENT_OVERSTOCK_PENALTY:       float = 0.20   # unsold pre-stock post-event
+R6_EVENT_DEMAND_UPLIFT_DENOMINATOR: float = 100.0  # normaliser for r6 scaling
+
+# ---------------------------------------------------------------------------
+# Engine 7 - Surplus Box Subscription. Friday assembly of near-expiry
+# items into a 1.5-2 kg box; weekly dispatch to subscribers.
+# r7 = subscriber_retention * (box_revenue / box_cost).
+# ---------------------------------------------------------------------------
+SURPLUS_BOX_DEFAULT_SUBSCRIBERS:    int   = 25
+SURPLUS_BOX_TARGET_WEIGHT_KG_MIN:   float = 1.5
+SURPLUS_BOX_TARGET_WEIGHT_KG_MAX:   float = 2.0
+SURPLUS_BOX_PRICE_PER_KG:           float = 80.0
+R7_FIVE_STAR_BONUS_PER_SUBSCRIBER:  float = 0.10
+R7_CANCEL_PENALTY_PER_SUBSCRIBER:   float = 0.30
+
+# ---------------------------------------------------------------------------
+# (Optional, non-SES) Blinkit/Zepto-style realism extras. Kept for the
+# /commons/* dashboard panels but NOT in the SES path. Numbering uses
+# semantic names rather than r6/r7 to avoid colliding with the user's
+# Engines 6 and 7 above.
 # Public sources: Blinkit dark-store ops post-mortems, Zepto Plus
 # launch press, FY24 ICRA QCom report.
 # ---------------------------------------------------------------------------

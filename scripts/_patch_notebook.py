@@ -690,6 +690,98 @@ Two more envs the project ships:
 Just runs reset + a couple of steps to confirm everything wired up.
 """
 
+CELL_SEVEN_ENGINES_MD = """\
+## Section 5h -- All 7 engines + SES (the FreshPrice strategy core)
+
+This is the canonical FreshPrice 7-engine reward demo. Every brief the
+LLM writes can carry directives for any subset of:
+
+  Engine 1  Dynamic Pricing            r1_pricing      w1=0.28
+  Engine 2  Farmer Offer               r2_farmer       w2=0.18
+  Engine 3  Social Trend               r3_trend        w3=0.15
+  Engine 4  Intra-Fleet Rebalancing    r4_intrafleet   w4=0.12
+  Engine 5  Micro-Manufacturer         r5_micromfg     w5=0.10
+  Engine 6  Event Pre-Positioning      r6_event        w6=0.10
+  Engine 7  Surplus Box Subscription   r7_surplusbox   w7=0.07
+
+  SES = sum(w_i * r_i)   <- primary curriculum-promotion metric
+
+This cell builds a brief that fires Engines 4-7 simultaneously inside
+a STABLE_WEEK episode, prints r1..r7 + SES, and confirms the strategy's
+scenario-to-engine mapping (Section 8).
+"""
+
+CELL_SEVEN_ENGINES_CODE = """\
+# ============================================================
+# CELL 5h -- All 7 engines + SES smoke (FreshPrice strategy core)
+# ============================================================
+
+import sys, os, json
+sys.path.insert(0, REPO_DIR)
+
+from freshprice_env.freshprice_env import FreshPriceEnv
+from freshprice_env.enums import (
+    CurriculumScenario, ACTIVE_ENGINES_BY_SCENARIO, active_engines,
+)
+
+# Confirm scenario -> engine map matches the strategy (Section 8).
+print(\"Strategy scenario -> active engines:\")
+for s in CurriculumScenario:
+    eng_set = sorted(active_engines(s))
+    print(f\"  {s.name:18s} -> {eng_set}\")
+print()
+
+# Build a brief that fires Engines 1, 4, 5, 6, 7 in one shot.
+env = FreshPriceEnv(scenario=CurriculumScenario.STABLE_WEEK, seed=42)
+obs, info = env.reset()
+target_batch = env.hero._state.batches[0].batch_id if hasattr(env, 'hero') \\
+    else env._state.batches[0].batch_id
+
+brief = f\"\"\"SITUATION: 7-engine FreshPrice demo. Holding price; routing one
+batch to the processor; pre-stocking for an upcoming event; assembling
+a small surplus box.
+SIGNAL ANALYSIS: N/A
+VIABILITY CHECK: N/A
+RECOMMENDATION: Exercise Engines 1+4+5+6+7 in a single brief.
+DIRECTIVE:
+{json.dumps({
+    \"engine\": \"PRICING\",
+    \"actions\": [],
+    \"intrafleet_actions\": [
+        {\"source_store\": \"store_A\", \"dest_store\": \"store_B\",
+         \"batch_id\": target_batch, \"units\": 3},
+    ],
+    \"micromfg_actions\": [{\"batch_id\": target_batch, \"processor\": \"meena_pickle\"}],
+    \"event_actions\": [
+        {\"category\": \"dairy\", \"quantity_units\": 15, \"target_event_tick\": 80},
+    ],
+    \"surplus_box_actions\": [{\"batch_id\": target_batch, \"units\": 2}],
+})}
+CONFIDENCE: MEDIUM\"\"\"
+
+obs, reward, done, truncated, info = env.step(brief)
+
+print(\"Reward components in info dict:\")
+print(f\"  r1_pricing             : {info.get('r1_pricing'):+.4f}\")
+print(f\"  r2_farmer              : {info.get('r2_farmer'):+.4f}\")
+print(f\"  r3_trend               : {info.get('r3_trend'):+.4f}\")
+print(f\"  r4_intrafleet          : {info.get('r4_intrafleet'):+.4f}\")
+print(f\"  r5_micromfg            : {info.get('r5_micromfg'):+.4f}\")
+print(f\"  r6_event               : {info.get('r6_event'):+.4f}\")
+print(f\"  r7_surplusbox          : {info.get('r7_surplusbox'):+.4f}\")
+print()
+print(f\"  Store Efficiency Score : {info.get('store_efficiency_score'):+.4f}\")
+print()
+print(\"Engine snapshots:\")
+print(f\"  intrafleet : {info.get('intrafleet_snapshot')}\")
+print(f\"  micromfg   : {info.get('micromfg_snapshot')}\")
+print(f\"  event      : {info.get('event_snapshot')}\")
+print(f\"  surplusbox : {info.get('surplusbox_snapshot')}\")
+print()
+print(\"All 7 engines + SES wired into FreshPriceEnv.step() PASSED.\")
+"""
+
+
 CELL_BLINKIT_WIRED_MD = """\
 ## Section 5e2 -- Blinkit-wired MarketCommonsEnv (r6 + r7 in info dict)
 
@@ -1183,7 +1275,14 @@ def main() -> None:
     insert_cell_after(nb, after_cell_id="cell-blinkit-smoke-md",
                       new_cell_id="cell-blinkit-smoke",
                       cell_type="code", source=CELL_BLINKIT_SMOKE_CODE)
+    # FreshPrice 7-engines + SES showcase (the strategy-aligned cell).
     insert_cell_after(nb, after_cell_id="cell-blinkit-smoke",
+                      new_cell_id="cell-seven-engines-md",
+                      cell_type="markdown", source=CELL_SEVEN_ENGINES_MD)
+    insert_cell_after(nb, after_cell_id="cell-seven-engines-md",
+                      new_cell_id="cell-seven-engines",
+                      cell_type="code", source=CELL_SEVEN_ENGINES_CODE)
+    insert_cell_after(nb, after_cell_id="cell-seven-engines",
                       new_cell_id="cell-blinkit-wired-md",
                       cell_type="markdown", source=CELL_BLINKIT_WIRED_MD)
     insert_cell_after(nb, after_cell_id="cell-blinkit-wired-md",

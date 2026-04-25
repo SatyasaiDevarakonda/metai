@@ -100,6 +100,13 @@ class FreshPriceEnv(gym.Env):
         self._reward_engine: WRRRewardEngine | None = None
         self._shock_engine: ExternalShockEngine | None = None
         self._state: SimulatedMarketState | None = None
+        # Engines 4-7 (FreshPrice strategy Section 5). Lazy-import so the
+        # core 3-engine path stays unchanged and the new module is only
+        # touched when an env actually has these engines active.
+        self._intrafleet_engine = None
+        self._micromfg_engine = None
+        self._event_engine = None
+        self._surplusbox_engine = None
 
         # Episode tracking
         self._current_tick: int = 0
@@ -137,6 +144,18 @@ class FreshPriceEnv(gym.Env):
         self._trend_engine = TrendEngine(self.rng)
         self._reward_engine = WRRRewardEngine()
         self._shock_engine = ExternalShockEngine(self.scenario, self.rng)
+
+        # FreshPrice 7-engine SES path (Section 5 of the strategy). Engines
+        # 4-7 are scored on every brief from any side directives the LLM
+        # writes; they default to 0 contribution when the brief carries
+        # no intrafleet/micromfg/event/surplusbox actions.
+        from freshprice_env.engines.seven_engines_reward import (
+            IntraFleetEngine, MicroMfgEngine, EventEngine, SurplusBoxEngine,
+        )
+        self._intrafleet_engine = IntraFleetEngine()
+        self._micromfg_engine   = MicroMfgEngine()
+        self._event_engine      = EventEngine()
+        self._surplusbox_engine = SurplusBoxEngine()
 
         # Reset tick counters
         self._current_tick = 0
@@ -373,6 +392,72 @@ class FreshPriceEnv(gym.Env):
             else (VALIDATION_FAIL_REWARD_PENALTY
                   if not info["validation_success"] else 0.0)
         )
+
+        # ----------------------------------------------------------
+        # 6b. FreshPrice 7-engine SES path. r1/r2/r3 are taken from
+        # the existing reward-engine deltas; r4-r7 are computed from any
+        # side directives the LLM included in this brief.
+        # ----------------------------------------------------------
+        from freshprice_env.engines.seven_engines_reward import (
+            parse_intrafleet_transfers, parse_micromfg_routings,
+            parse_event_prestocks, parse_surplus_box_selections,
+            store_efficiency_score,
+        )
+        batches_by_id = {b.batch_id: b for b in self._state.batches}
+        intra_decisions = parse_intrafleet_transfers(action)
+        micromfg_decisions = parse_micromfg_routings(action)
+        event_decisions = parse_event_prestocks(action)
+        surplusbox_decisions = parse_surplus_box_selections(action)
+
+        if intra_decisions:
+            self._intrafleet_engine.execute(intra_decisions, batches_by_id)
+        if micromfg_decisions:
+            self._micromfg_engine.execute(micromfg_decisions, batches_by_id)
+        if event_decisions:
+            self._event_engine.execute(event_decisions,
+                                       current_tick=self._current_tick)
+        if surplusbox_decisions:
+            self._surplusbox_engine.assemble(
+                surplusbox_decisions, batches_by_id, self.rng,
+            )
+
+        # r1/r2/r3 come from the existing reward engine. The legacy
+        # PricingEngine/FarmerEngine/TrendEngine do not expose per-brief
+        # rewards directly; we approximate per-brief r1 as wrr_delta (this
+        # brief's WRR contribution) and r2/r3 as 0 unless the brief's
+        # directive explicitly fired (action_reward != 0). The strategy
+        # weights normalise this so r1 dominates SES as intended.
+        r1_brief = float(wrr_delta)
+        r2_brief = float(getattr(self._farmer_engine, "last_brief_reward", 0.0))
+        r3_brief = float(getattr(self._trend_engine, "last_brief_reward", 0.0))
+        r4_brief = self._intrafleet_engine.compute_brief_reward()
+        r5_brief = self._micromfg_engine.compute_brief_reward()
+        r6_brief = self._event_engine.compute_brief_reward()
+        r7_brief = self._surplusbox_engine.compute_brief_reward()
+        ses = store_efficiency_score(
+            r1=r1_brief, r2=r2_brief, r3=r3_brief,
+            r4=r4_brief, r5=r5_brief, r6=r6_brief, r7=r7_brief,
+        )
+        info.update({
+            "r1_pricing":     round(r1_brief, 4),
+            "r2_farmer":      round(r2_brief, 4),
+            "r3_trend":       round(r3_brief, 4),
+            "r4_intrafleet":  round(r4_brief, 4),
+            "r5_micromfg":    round(r5_brief, 4),
+            "r6_event":       round(r6_brief, 4),
+            "r7_surplusbox":  round(r7_brief, 4),
+            "store_efficiency_score": ses,
+            "intrafleet_snapshot":  self._intrafleet_engine.snapshot(),
+            "micromfg_snapshot":    self._micromfg_engine.snapshot(),
+            "event_snapshot":       self._event_engine.snapshot(),
+            "surplusbox_snapshot":  self._surplusbox_engine.snapshot(),
+        })
+        # Per-brief stats reset so the next brief's r4-r7 measure only
+        # this brief's directives. Episode totals stay on the engines.
+        self._intrafleet_engine.reset_brief()
+        self._micromfg_engine.reset_brief()
+        self._event_engine.reset_brief()
+        self._surplusbox_engine.reset_brief()
 
         # ----------------------------------------------------------
         # 7. CHECK termination

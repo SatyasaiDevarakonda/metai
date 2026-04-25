@@ -1,5 +1,5 @@
 ---
-title: QStorePrice Commons
+title: FreshPrice AI - Perishable Goods Intelligence
 emoji: 🥭
 colorFrom: green
 colorTo: red
@@ -8,278 +8,238 @@ app_file: app.py
 pinned: false
 ---
 
-# QStorePrice Commons — a 6+1 Multi-Agent Perishable Goods Ecosystem
+# FreshPrice AI — Perishable Goods Intelligence
 
-> Six LLM-driven actors with conflicting incentives, hidden private information,
-> and persistent reputation negotiate a shared market over a 30-day horizon.
-> A seventh — the Oversight Auditor — watches them all.
+**OpenEnv Hackathon (India 2026) — Round 2 submission**
+**Repo:** https://github.com/SatyasaiDevarakonda/metai
 
-QStorePrice was originally pitched as "an RL-trained LLM that writes pricing
-briefs." The hackathon-grade version flips that upside down: pricing is one
-sub-task inside a *partially observable, multi-agent* simulation that targets
-**Theme #1 (multi-agent)** + **Theme #2 (long-horizon)** simultaneously, with
-bonus alignment on the **Fleet AI**, **Halluminate**, **Patronus**, and **Mercor**
-sub-prizes.
+> Can an LLM learn to make every perishable goods decision a small business
+> owner faces — pricing, procurement, trend-reading, multi-store rebalancing,
+> dead-stock routing, event pre-positioning, and weekly clearance —
+> better than they can alone?
 
 ---
 
-## 1. The seven actors
+## Priya's story (the problem we are solving)
 
-| Agent | Role | Hidden info | LLM? |
-|---|---|---|---|
-| **StoreAgent** (hero, the trained model) | Writes Operating Briefs + ## NOTEBOOK + ## MESSAGES | private cash, plan | yes |
-| **CompetitorStoreAgent** | Same market, different store | competitor inventory + cash | yes (frozen ckpt or scripted) |
-| **FarmerAgent** (pool of 5) | Emits BIDs, reacts to COUNTERs, **remembers** every interaction | reserve price, alternative buyers | optional LLM, otherwise persona-based |
-| **ConsumerCohortAgent** (3 personas: budget / foodie / festival) | Reactive demand boosts | true willingness-to-pay | rule-based (fast) |
-| **InfluencerAgent** | Emits trend signals — half are paid promotion | which signals are paid | procedural |
-| **RegulatorAgent** | Mid-episode policy drift (FSSAI, ASCI, DPIIT) | drift schedule | procedural |
-| **OversightAuditor** (the 7th) | Reads bus + briefs + notebook → trust score + narrative + recommendation | nothing — that's the point | LLM (or rule-based fallback) |
+Priya runs an organic grocery in Chennai. She stocks 40 fresh products. Every
+week she throws away **22% of what she buys — roughly Rs 18,000 in wasted
+inventory**. She misses demand spikes because she did not see the viral food
+trend coming. She turns away farmers with good surplus because pricing it
+quickly feels risky. She has three stores but no system to move excess stock
+between them. Every Friday she discounts frantically, hoping to clear the
+week's remaining produce before the weekend.
+
+**FreshPrice AI is built for Priya.** Not for Blinkit. Not for enterprise
+retail. For the small online grocery owner losing money to perishable waste
+every single week, with no intelligent system to help.
 
 ---
 
-## 2. What's new vs. the v1 single-store env
+## The seven engines
 
-| Feature | v1 | v2 (now) |
+The agent's job is the full stack of decisions a perishable-goods seller
+faces every week. Each engine produces its own reward component (`r_i`)
+which combines into a single composite **Store Efficiency Score (SES)**:
+
+| # | Engine | Decision | Reward (r_i) | SES weight |
+|---|---|---|---|---|
+| 1 | **Dynamic Pricing** | Price multiplier + flash-sale + bundle per SKU | `r1_pricing` | **0.28** |
+| 2 | **Farmer Offer** | Accept / counter-offer / decline pending farmer batches | `r2_farmer` | 0.18 |
+| 3 | **Social Trend** | Approve / decline trend-driven purchase orders | `r3_trend` | 0.15 |
+| 4 | **Intra-Fleet Rebalancing** | TRANSFER excess stock between stores | `r4_intrafleet` | 0.12 |
+| 5 | **Micro-Manufacturer Pipeline** | Route near-expiry batches to processors | `r5_micromfg` | 0.10 |
+| 6 | **Event Pre-Positioning** | Pre-stock for cricket / festival / weekend events | `r6_event` | 0.10 |
+| 7 | **Surplus Box Subscription** | Friday assembly of weekly subscriber box | `r7_surplusbox` | 0.07 |
+
+**SES = Σ wᵢ · rᵢ.** Used as the curriculum-promotion metric: an agent must
+reach SES ≥ 0.70 over five consecutive evaluation episodes to advance to
+the next training scenario. The weights are computed in
+[`freshprice_env/constants.py`](freshprice_env/constants.py) and the SES
+math lives in [`freshprice_env/engines/seven_engines_reward.py`](freshprice_env/engines/seven_engines_reward.py).
+
+---
+
+## The Operating Brief — what the LLM actually outputs
+
+The agent does **not** emit raw action values. It writes a 6-section
+**Operating Brief**, and a deterministic rule executor parses the
+`DIRECTIVE` section into action values. Every decision is therefore
+readable, explainable, and overridable by the seller. Sample brief:
+
+```
+SITUATION: Farmer Rajan offers 50 kg ripe Alphonso at Rs 35/kg. We have no
+current mango inventory. It is Thursday 2pm.
+
+SIGNAL ANALYSIS: N/A
+
+VIABILITY CHECK: Shelf life: 48 hours. At Rs 80/kg, velocity = 3 kg/hr.
+Need ~17 hrs of selling time. PASS. No conflicting mango inventory. PASS.
+Break-even at Rs 48/kg. Market rate Rs 85-110. HEALTHY. Worst-case
+(60% sell-through): Rs 2,250 revenue vs Rs 1,750 cost. BREAK-EVEN at worst.
+
+RECOMMENDATION: ACCEPT. Counter-offer Rs 42/kg. Expected profit Rs 1,100-1,800.
+
+DIRECTIVE:
+{"engine": "FARMER", "actions": [{"offer_id": "F001", "decision": "COUNTER",
+                                  "counter_price": 42}]}
+
+CONFIDENCE: HIGH
+```
+
+A single brief can carry **side directives** for any subset of Engines 4-7
+inside the same JSON object — see
+[`freshprice_env/brief_pipeline/prompt_builder.py`](freshprice_env/brief_pipeline/prompt_builder.py)
+for the full schema.
+
+---
+
+## How it covers the four hackathon themes
+
+| Theme | How FreshPrice earns it |
+|---|---|
+| **#1 Multi-Agent** | Hero StoreAgent + simulated customer cohorts + farmer pool (5 agents with persistent reputation) + competitor stores + RegulatorAgent + InfluencerAgent + OversightAuditor. All the agent files live under [`freshprice_env/agents/`](freshprice_env/agents/). |
+| **#2 Long-Horizon** | 30-day `LongHorizonFreshPriceEnv` (84 briefs / week × 4 weeks) with `AgentNotebook` for `NOTE`/`COMMIT`/`UPDATE_PLAN` directives. Plan-adherence reward (`r_plan_adherence`) tracks honored commitments minus broken ones. |
+| **#3 World Modeling** | The agent must build an implicit world model: which trend signals reliably convert to demand, which farmer offers have positive expected value, which events drive which categories. Schema-drift APIs (Patronus AI bonus) force the model to update its understanding of the world mid-episode. |
+| **#4 Self-Improvement** | Curriculum across 5 scenarios (STABLE_WEEK → CRISIS_WEEK), `ScenarioComposer` with Thompson-sampling difficulty selection, and self-play `NegotiationEnv` for bilateral training. |
+
+---
+
+## Training pipeline (SFT → REINFORCE+KL → DPO)
+
+Single Colab/Kaggle notebook: [`kaggle_qstoreprice.ipynb`](kaggle_qstoreprice.ipynb)
+runs end-to-end on a Kaggle T4. Stages:
+
+1. **SFT warm-start** — 50-100 hand-crafted Operating Briefs (covers the
+   format + viability-check pattern). Without this, RL spends the first
+   20-30 episodes fixing the brief format.
+2. **Rollout collection** — generate briefs in `FreshPriceEnv`, score with
+   r1..r7 + SES, push valid trajectories into `TrajectoryBuffer`.
+3. **REINFORCE+KL (real on-policy RL)** — see
+   [`training/reinforce_trainer.py`](training/reinforce_trainer.py).
+   `policy_loss = -advantage · log π_θ + β · KL(π_θ || π_ref)`. Loss runs
+   `.backward()` and `optimizer.step()` per grad-accum boundary. KL ref
+   is the frozen SFT policy (LoRA off → π_ref).
+4. **DPO** — TRL `DPOTrainer` on regret-weighted preference pairs from
+   the trajectory buffer. The constitutional anti-hack filter excludes
+   trajectories that earned reward by violating the operating constitution.
+
+The SFT data budget is derived (not hardcoded) by
+[`training/data_budget.py`](training/data_budget.py): the formula reads
+model-parameter count, format complexity, target format-recall, and a
+VRAM cap. The notebook prints `budget.rationale` so a judge can see *why*
+each value was picked.
+
+---
+
+## Hackathon submission checklist
+
+| Requirement | Status | Where |
 |---|---|---|
-| Episode length | 7 days / 84 briefs | **30 days / 360 briefs** in `LongHorizonFreshPriceEnv` |
-| Memory | LLM context only | **AgentNotebook**: `NOTE` / `RECALL` / `COMMIT` / `UPDATE_PLAN`, with FIFO eviction + pinned slots |
-| Reward | r1+r2+r3 → WRR | + **r4 plan adherence**, **r5 token-scaled** (Mercor), **cooperation_index** |
-| Multi-agent | static rule-based consumer | **bus + competitor + farmer pool + auditor + regulator** |
-| Farmer behaviour | fixed scheduled offers | **persistent SQLite reputation**, persona-driven counters, trust-modulated reserves |
-| Schema | fixed | **versioned schemas** (`PRICING.v1/v2/v3`, `FARMER.v1/v2`, `TREND.v1/v2`); regulator mutates mid-episode |
-| Trend signals | all genuine | **half paid promotion** with hidden `is_paid_promotion` flag; corroborants observable |
-| Curriculum | 5 hand-crafted levels | + 6th `REGULATORY_WEEK` + **adaptive `ScenarioComposer`** (Thompson sampling) |
-| Self-play | none | **rotating frozen-opponent** negotiation arena (Theme #4) |
-| Eval | WRR only | + **Theory-of-Mind probe** + **counterfactual replay** + **oversight audit grade** |
-| Dashboard | polling HTML | **WebSocket-streamed**, 6+1 agent panes, replay slider, audit narrative card |
+| Use OpenEnv (latest release) | ✅ | [`server/app.py`](server/app.py), [`openenv.yaml`](openenv.yaml), `gym.Env`-compliant `reset/step/state` |
+| Working training script (Unsloth / TRL) | ✅ | [`kaggle_qstoreprice.ipynb`](kaggle_qstoreprice.ipynb) |
+| Evidence of training (loss + reward plots) | ✅ | `plots/rl_learning_curve.png`, `plots/reinforce_curve.png` (generated by the notebook) |
+| Hugging Face Space hosting | 🟡 | Push this repo to a Space; the Dockerfile is ready |
+| Mini-blog OR <2 min video | ⏳ | TODO — link from this README once published |
+| README that motivates problem + shows results | ✅ | This file |
 
 ---
 
-## 3. Architecture
+## Quickstart — run locally
+
+```bash
+git clone https://github.com/SatyasaiDevarakonda/metai.git
+cd metai
+pip install -r requirements.txt
+
+# Run the test suite (64 tests, ~1 sec)
+python -m unittest discover tests -v
+
+# Start the FastAPI dashboard server
+uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
+# open http://localhost:8000
+```
+
+To drive the dashboard with **your trained Kaggle model** (no local GPU
+needed), set:
+
+```bash
+export AGENT_BACKEND=hf_inference
+export HF_REPO_ID="your-hf-username/qstoreprice-sft"
+export HF_TOKEN="hf_..."
+```
+
+…and click **Run live demo** at the top of the dashboard. The Simulation
+Theater below auto-plays the recorded tick frames.
+
+The full Kaggle → VS Code path with all environment variables is in
+[`.env.example`](.env.example).
+
+---
+
+## Architecture cheat-sheet
 
 ```
 freshprice_env/
-  freshprice_env.py             # legacy single-store gym env (still works)
-  long_horizon_env.py           # 30-day, sparse reward, NOTEBOOK, plan-adherence
-  market_commons_env.py         # ★ headline multi-agent ecosystem
-  multi_agent_env.py            # hero + reactive consumer
-  multi_store_env.py            # cooperative N-store transfers
-  negotiation_env.py            # bilateral self-play arena
-
-  agents/
-    farmer_agent.py             # ★ LLM-or-persona farmer with reputation
-    competitor_store_agent.py   # ★ rival store with 4 personas
-    oversight_auditor.py        # ★ 7th-agent trajectory auditor (Fleet AI)
-    regulator_agent.py          # ★ schema-drift broadcaster (Patronus)
-    influencer_agent.py         # ★ trend signals incl. paid promotion
-    consumer_agent.py           # rule-based reactive consumer
-
-  notebook/
-    agent_notebook.py           # ★ durable scratchpad (NOTE/COMMIT/PLAN)
-    notebook_directives.py      # ★ parser + executor + commitment evaluator
-
-  protocol/
-    market_bus.py               # ★ typed inter-agent message log
-
-  persistence/
-    reputation_store.py         # ★ SQLite reputation graph
-
-  brief_pipeline/
-    schema_registry.py          # ★ versioned DIRECTIVE schemas
-
-  scenario_composer.py          # ★ Thompson-sampling adaptive curriculum
-  reward.py                     # extended w/ r4, r5, cooperation_index
-
-eval/
-  theory_of_mind_probe.py       # ★ ToM held-out evaluation
-  counterfactual_replay.py      # ★ swap-one-decision replay tool
-  evaluator.py                  # WRR-greedy held-out eval
-  anti_hack_checker.py          # constitutional audit
-  baselines/                    # random + rule-based + run_baselines.py
+├── freshprice_env.py             ← single-store gym env (the core)
+├── long_horizon_env.py           ← 30-day wrapper (Theme #2)
+├── market_commons_env.py         ← 6+1 multi-agent commons (Theme #1)
+├── multi_store_env.py            ← Engine 4 transfer execution
+├── negotiation_env.py            ← bilateral self-play (Theme #4)
+├── multi_agent_env.py            ← reactive consumer + LLM hero
+├── engines/
+│   ├── pricing_engine.py         ← Engine 1
+│   ├── farmer_engine.py          ← Engine 2
+│   ├── trend_engine.py           ← Engine 3
+│   └── seven_engines_reward.py   ← Engines 4-7 + SES (NEW)
+├── agents/
+│   ├── farmer_agent.py competitor_store_agent.py consumer_agent.py
+│   ├── influencer_agent.py regulator_agent.py oversight_auditor.py
+│   └── consumer_cohort_agent.py
+├── brief_pipeline/               ← parser + validator + prompt builder
+├── notebook/                     ← AgentNotebook for plan adherence
+├── persistence/reputation_store.py  ← persistent farmer trust
+└── protocol/market_bus.py        ← pub/sub for cross-agent messages
 
 training/
-  train.py                      # SFT → GRPO → DPO orchestration
-  self_play.py                  # ★ rotating-opponent negotiation self-play
-  oversight_trainer.py          # ★ SFT for the auditor LLM
-  grpo_trainer.py / sft_trainer.py / dpo_trainer.py
-  curriculum.py / counterfactual.py / trajectory_buffer.py
+├── data_budget.py                ← formula-driven SFT data budget
+├── generate_sft_data.py          ← 270 hand-crafted briefs
+├── sft_trainer.py                ← Unsloth SFT
+├── reinforce_trainer.py          ← REAL REINFORCE+KL policy gradient
+├── dpo_trainer.py                ← TRL DPO
+└── trajectory_buffer.py          ← regret-weighted DPO pair generation
 
 server/
-  app.py                        # FastAPI + ★ /commons/* endpoints + ★ /commons/ws
+├── app.py                        ← FastAPI: /reset /step /state /agent/*
+├── agent_runtime.py              ← Local / HF Inference / Scripted backends
+└── environment.py                ← OpenEnv adapter
 
-static/v2/                      # ★ new live dashboard
-data/snapshots/                 # ★ real Bangalore mandi prices, food trends, FSSAI excerpts
-```
-
-★ = added in v2.
-
----
-
-## 4. Getting started
-
-```bash
-pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
-pip install -r requirements_training.txt
-
-# Verify everything wired up (CPU only)
-python -c "from freshprice_env.market_commons_env import MarketCommonsEnv; \
-           from freshprice_env.enums import CurriculumScenario; \
-           env = MarketCommonsEnv(scenario=CurriculumScenario.CRISIS_WEEK); \
-           obs, info = env.reset(); print(info['mode'])"
-
-# Run all tests (49 of them, ~1s)
-python -m unittest discover tests -v
+static/v2/                        ← Live multi-agent dashboard + Theater
 ```
 
 ---
 
-## 4b. Use your trained weights in the dashboard
-
-After running `kaggle_qstoreprice.ipynb` end-to-end on Kaggle the SFT
-checkpoint sits at `/kaggle/working/checkpoints/final` and (if you set
-`HF_TOKEN`) is also pushed to the HF Hub. Tying it back to the local
-FastAPI dashboard is one env-var flip:
-
-| Path | When to use | What to set |
-|---|---|---|
-| **HF Inference API** | no GPU on your laptop | `AGENT_BACKEND=hf_inference`, `HF_REPO_ID=<user/repo>`, `HF_TOKEN=hf_…` |
-| **Local checkpoint** | you have an 8 GB+ GPU and downloaded `final/` | `AGENT_BACKEND=local`, `MODEL_PATH=/abs/path/to/final` |
-| **Scripted fallback** | first run, no model yet | `AGENT_BACKEND=scripted` (or just leave the others unset) |
-
-Then start the server in a fresh terminal:
-
-```bash
-pip install -r requirements.txt
-uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
-```
-
-Open <http://localhost:8000>. The **Run live demo** panel at the top of
-the dashboard shows the active backend and exposes a one-click episode
-run that drives the Simulation Theater with the loaded model. Scripted
-mode is what you see before you have a checkpoint — the briefs are
-heuristic but well-formed (all 6 sections, valid JSON DIRECTIVE), so
-the rest of the dashboard works end-to-end on day one.
-
-Diagnostic endpoints once the server is up:
-
-| Endpoint | What it tells you |
-|---|---|
-| `GET /agent/info` | which backend was loaded and how |
-| `POST /agent/brief` | one-shot brief from a prompt |
-| `POST /agent/run_episode` | run an episode, push frames to the theater |
-| `GET /commons/sim_frames` | the ring buffer of recent tick frames |
-| `GET /commons/rider_pool` | live rider-queue + transit-spoilage stats |
-| `GET /commons/cohorts` | per-cohort retention / walk-aways |
-| `GET /commons/liquidation` | dead-stock B2B firesale history |
-
----
-
-## 5. The eight reward components
-
-WRR remains the headline KPI. The expanded reward signal exposes more of *why*
-the agent behaves the way it does. r6 and r7 only appear when
-`MarketCommonsEnv(enable_blinkit=True)` — they're the Blinkit/Zepto-style
-quick-commerce realism layer:
-
-| Component | Source | What it measures |
-|---|---|---|
-| `r1_pricing` | PricingEngine | Discount timing vs. expiry urgency |
-| `r2_farmer` | FarmerEngine | Viability + reputation-aware accept/counter/decline |
-| `r3_trend` | TrendEngine | Restock decisions; penalises paid-promo gullibility |
-| `r4_plan_adherence` | AgentNotebook | Honored commitments − broken commitments |
-| `r5_reasoning_tokens` | Reward engine | Capped, quality-gated token-scaled reward (Mercor) |
-| `r6_delivery_quality` | RiderPoolEngine | On-time deliveries minus transit spoilage (Blinkit) |
-| `r7_liquidation` | LiquidationEngine | Legitimate B2B firesale minus reckless dumping |
-| `cooperation_index` | MarketCommonsEnv | Pareto-improving exchanges with other agents |
-
----
-
-## 6. Hackathon theme alignment
-
-| Theme | How we hit it |
-|---|---|
-| **#1 Multi-Agent Interactions** | 6+1 actors share a partially-observable bus; farmer reputation persists across episodes; cooperation index measures pareto-improving messages |
-| **#2 (Super) Long-Horizon Planning** | 30-day episodes (360 briefs), sparse weekly reward, prompt forcibly truncated to ~3.5 KB so the AgentNotebook is the *only* memory, plan-adherence reward grades multi-week commitments |
-| **#3 World Modeling** | External shocks (weather, festivals), influencer disinformation, regulator policy drift |
-| **#4 Self-Improvement** | `ScenarioComposer` Thompson-sampling adaptive curriculum, rotating-opponent self-play in NegotiationEnv |
-| **Fleet AI sub-prize** | OversightAuditor reads trajectories and writes structured audits (TRUST_SCORE / SUSPICIOUS_PATTERNS / NARRATIVE / RECOMMENDATION). Trains via `training/oversight_trainer.py` |
-| **Halluminate sub-prize** | StoreAgent manages multiple actors (farmers, competitor, influencer, regulator) to discover and achieve goals |
-| **Patronus sub-prize** | `SchemaRegistry` + `RegulatorAgent` mutate the DIRECTIVE schema mid-episode (v1→v2→v3); briefs that don't adapt fail validation |
-| **Mercor sub-prize** | `r5_reasoning_tokens` is a capped reward that scales with brief token output, gated by quality floor — falsifiable curve |
-
----
-
-## 7. Live dashboard
-
-```bash
-uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
-# open http://localhost:8000/        ← V2 multi-agent dashboard
-# open http://localhost:8000/legacy  ← V1 polling dashboard (still works)
-```
-
-The V2 dashboard shows:
-
-- 6+1 live agent panes streaming bus messages in real time
-- KPI strip: WRR, Cooperation Index, Plan Adherence, Auditor Trust, Pool Trust, Active Schemas
-- Notebook panel: plan, pinned notes, recent notes, commitments (✓ / ✗ / ⏳)
-- Latest oversight audit narrative
-- Counterfactual replay slider (POSTs to `/commons/replay`)
-- Adaptive curriculum hardness posteriors per axis
-- Full bus message log (most recent 200)
-
----
-
-## 8. The agent's brief, expanded
-
-Briefs are the same 6-section document, plus two new optional sections:
+## Test coverage
 
 ```
-SITUATION:        ...
-SIGNAL ANALYSIS:  ...
-VIABILITY CHECK:  ...
-RECOMMENDATION:   ...
-DIRECTIVE:        {"engine": "PRICING", "actions": [...]}
-CONFIDENCE:       HIGH | MEDIUM | LOW
-
-## NOTEBOOK
-NOTE: cash_buffer -> 4200
-NOTE_PIN: regulator_pricing_v3_required -> after tick 528
-COMMIT: inventory_below:dairy:30@800 | clear dairy by midnight day 6
-UPDATE_PLAN: protect cash buffer through day 4, then unwind dairy
-
-## MESSAGES
-CHAT @farmer.rajan: appreciate the mango offer, considering
-BID  @farmer.rajan: 38.0/kg for 50kg, 24h decision window
-REVEAL @store_002: we are over-stocked on dairy this week
+$ python -m unittest discover tests
+Ran 64 tests in 1.05s
+OK (skipped=1)
 ```
+
+Tests cover: env contract, reward components, anti-hack rules, brief
+parser, all 6 scenarios, the Blinkit-style realism layer (rider pool,
+cohorts, liquidation), the Market Commons multi-agent flow, and the new
+7-engine SES path (`tests/test_seven_engines.py`).
 
 ---
 
-## 9. Endpoints
+## Citation / further reading
 
-OpenEnv contract (single-store):
-
-`GET /health` · `POST /reset` · `POST /step` · `GET /state` · `WS /ws` · `GET /docs`
-
-Multi-agent commons:
-
-`GET /commons/snapshot` · `GET /commons/bus` · `GET /commons/audit`
-`GET /commons/notebook` · `GET /commons/scenario_composer`
-`POST /commons/replay` · `WS /commons/ws`
-
-Admin / observability:
-
-`GET /admin/dashboard` · `GET /admin/metrics/scores` · `GET /admin/metrics/reward-curve`
-`GET /admin/tasks` · `POST /admin/metrics/reset`
-
----
-
-## 10. Citation
-
-```bibtex
-@software{qstoreprice_commons_2026,
-  title   = {QStorePrice Commons: A 6+1 Multi-Agent Perishable-Goods Ecosystem},
-  year    = {2026},
-  url     = {https://github.com/nandeshkanagaraju/QStorePrice},
-}
-```
+- **FreshPrice strategy doc** (the full design): the hackathon write-up bundled in this repo.
+- **Newsvendor problem**: Arrow et al. 1951; Whitin 1955. FreshPrice is a
+  partially observable multi-product newsvendor with endogenous pricing.
+- **GRPO** (DeepSeek): "GRPO is more efficient than PPO for verifiable
+  reward tasks" — quoted in the official hackathon guide.
+- **Liu et al. SAGE POM 2024**: confirms MARL outperforms classical OR
+  heuristics on multi-echelon supply chains.
