@@ -130,8 +130,17 @@ def collect_samples(trajectory_buffer) -> list[tuple[str, str, float]]:
         briefs = getattr(traj, "briefs", None) or []
         wrr = float(getattr(traj, "wrr", 0.0))
         for b in briefs:
-            prompt = b.get("prompt") or ""
-            completion = b.get("brief_text") or b.get("completion") or ""
+            # Tolerate three legacy key names so older trajectory dumps
+            # still feed REINFORCE: notebook cell 11 historically stored
+            # the model output under "raw_response" and never persisted
+            # the prompt; new runs store it under "prompt"+"brief_text".
+            prompt = b.get("prompt") or b.get("observation") or ""
+            completion = (
+                b.get("brief_text")
+                or b.get("completion")
+                or b.get("raw_response")
+                or ""
+            )
             if prompt and completion:
                 samples.append((prompt, completion, wrr))
     return samples

@@ -209,5 +209,58 @@ class TestMarketCommonsEnvWiring(unittest.TestCase):
         self.assertTrue(results and results[0]["reckless"])
 
 
+class TestReinforceCollectSamplesContract(unittest.TestCase):
+    """Regression for the bug where rollouts stored brief text under
+    ``raw_response`` but never persisted the prompt -- making
+    ``collect_samples`` return [] and REINFORCE silently no-op.
+
+    These tests pin the contract: collect_samples must accept any of
+    (prompt, observation) for the prompt and any of
+    (brief_text, completion, raw_response) for the completion.
+    """
+
+    def _buf_from(self, briefs):
+        from training.trajectory_buffer import Trajectory, TrajectoryBuffer
+        buf = TrajectoryBuffer(rng=random.Random(0))
+        traj = Trajectory(
+            episode_num=0, scenario=None, wrr=0.5,
+            brief_quality_score=0.7,
+            constitutional_passed=True, episode_valid=True,
+            briefs=briefs, reward_engine_snapshot={"wrr": 0.5},
+        )
+        buf.add(traj)
+        return buf
+
+    def test_new_keys_prompt_brief_text(self):
+        from training.reinforce_trainer import collect_samples
+        buf = self._buf_from([
+            {"prompt": "STATE: t0", "brief_text": "BRIEF body 1"},
+            {"prompt": "STATE: t1", "brief_text": "BRIEF body 2"},
+        ])
+        samples = collect_samples(buf)
+        self.assertEqual(len(samples), 2)
+        self.assertEqual([s[0] for s in samples], ["STATE: t0", "STATE: t1"])
+
+    def test_legacy_raw_response_still_works(self):
+        from training.reinforce_trainer import collect_samples
+        # Old rollouts: only `raw_response` is stored, no prompt.
+        buf = self._buf_from([
+            {"raw_response": "BRIEF body"},
+            {"raw_response": "another"},
+        ])
+        # No prompt -> collect_samples skips. This is the buggy case
+        # the fix detects + the receipts cell warns about.
+        self.assertEqual(collect_samples(buf), [])
+
+    def test_legacy_raw_response_with_observation_works(self):
+        from training.reinforce_trainer import collect_samples
+        buf = self._buf_from([
+            {"observation": "STATE", "raw_response": "BRIEF body"},
+        ])
+        samples = collect_samples(buf)
+        self.assertEqual(len(samples), 1)
+        self.assertEqual(samples[0][:2], ("STATE", "BRIEF body"))
+
+
 if __name__ == "__main__":
     unittest.main()
