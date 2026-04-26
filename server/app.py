@@ -511,6 +511,7 @@ def commons_sim_frames(limit: int = 240):
 
 from server.agent_runtime import (  # noqa: E402
     AgentRuntime, get_agent_runtime, reset_agent_runtime,
+    MultiAgentRuntime, get_comparison_runtime, reset_comparison_runtime,
 )
 
 
@@ -580,6 +581,156 @@ def _build_tick_frame(env_state: dict, brief_text: str, info_dict: dict) -> dict
         "wrr_so_far": env_state.get("wrr_so_far", 0.0),
         "reward_this_step": info_dict.get("reward"),
     }
+
+
+# ---------------------------------------------------------------------------
+# /agent/compare — before vs. after RL (judging criterion #3, 20% of score)
+# ---------------------------------------------------------------------------
+
+@app.get("/agent/compare/info", tags=["Agent Comparison"])
+def agent_compare_info():
+    """List the runtimes loaded for comparison (baseline / sft / rl).
+
+    Returns 503 if no runtime could be loaded (env vars missing).
+    """
+    try:
+        rt = get_comparison_runtime()
+        return {"status": "ready", "runtimes": rt.info(),
+                "names": rt.names}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/agent/compare/reload", tags=["Agent Comparison"])
+def agent_compare_reload():
+    """Drop the cached comparison runtime so the next call picks up new env vars."""
+    reset_comparison_runtime()
+    return {"status": "ok"}
+
+
+@app.post("/agent/compare/brief", tags=["Agent Comparison"])
+def agent_compare_brief(payload: dict):
+    """Generate the same brief from every loaded runtime.
+
+    Body: ``{"prompt": "...", "max_new_tokens": 600, "temperature": 0.7}``
+    Returns: ``{"baseline": "...", "sft": "...", "rl": "..."}``
+    """
+    prompt = (payload or {}).get("prompt", "")
+    if not isinstance(prompt, str) or not prompt:
+        return {"error": "payload must include `prompt` (non-empty string)"}
+    rt = get_comparison_runtime()
+    briefs = rt.generate_all(
+        prompt,
+        max_new_tokens=int((payload or {}).get("max_new_tokens", 600)),
+        temperature=float((payload or {}).get("temperature", 0.7)),
+    )
+    return {"runtimes": rt.info(), "briefs": briefs}
+
+
+@app.post("/agent/compare/episode", tags=["Agent Comparison"])
+def agent_compare_episode(payload: dict | None = None):
+    """Run the same episode with each loaded runtime; report per-runtime SES.
+
+    Body: ``{"scenario": "STABLE_WEEK", "seed": 42, "max_briefs": 8}``
+    Returns: ``{
+        "scenario": ..., "seed": ...,
+        "results": {
+            "baseline": {steps_completed, total_reward, final_wrr, mean_ses, briefs[]},
+            "sft":      {...},
+            "rl":       {...}
+        },
+        "improvement": {
+            "sft_over_baseline_ses_delta": +0.15,
+            "rl_over_sft_ses_delta":       +0.08,
+            ...
+        }
+    }``
+    """
+    payload = payload or {}
+    scenario_name = payload.get("scenario", "STABLE_WEEK")
+    try:
+        scenario = CurriculumScenario[scenario_name]
+    except KeyError:
+        return {"error": f"unknown scenario {scenario_name}"}
+    seed = int(payload.get("seed", 42))
+    max_briefs = int(payload.get("max_briefs", 8))
+
+    from freshprice_env.freshprice_env import FreshPriceEnv  # noqa: E402
+
+    rt = get_comparison_runtime()
+    results: dict[str, dict] = {}
+
+    for name in rt.names:
+        runtime = rt.get(name)
+        if runtime is None:
+            continue
+        env = FreshPriceEnv(scenario=scenario, seed=seed)
+        obs, info = env.reset()
+        ses_acc, total_reward = 0.0, 0.0
+        n_briefs, anti_hack_violations = 0, 0
+        sample_briefs = []
+        for step in range(max_briefs):
+            try:
+                brief = runtime.generate(obs)
+            except Exception as e:  # noqa: BLE001
+                brief = f"[runtime '{name}' failed: {e}]"
+            obs, reward, done, truncated, info = env.step(brief)
+            total_reward += float(reward)
+            ses_acc += float(info.get("store_efficiency_score", 0.0))
+            n_briefs += 1
+            if step < 2:    # keep only the first 2 briefs as samples
+                sample_briefs.append(brief)
+            if not info.get("parse_success", True):
+                anti_hack_violations += 1
+            if done:
+                break
+        final_reward = info.get("final_reward", {}) or {}
+        results[name] = {
+            "steps_completed":  n_briefs,
+            "total_reward":     round(total_reward, 4),
+            "final_wrr":        round(final_reward.get("wrr",
+                                       env.state().get("wrr_so_far", 0.0)), 4),
+            "mean_ses":         round(ses_acc / max(1, n_briefs), 4),
+            "anti_hack_violations": anti_hack_violations,
+            "sample_briefs":    sample_briefs,
+        }
+
+    improvement: dict[str, float] = {}
+    if "baseline" in results and "sft" in results:
+        improvement["sft_over_baseline_ses_delta"] = round(
+            results["sft"]["mean_ses"] - results["baseline"]["mean_ses"], 4,
+        )
+    if "sft" in results and "rl" in results:
+        improvement["rl_over_sft_ses_delta"] = round(
+            results["rl"]["mean_ses"] - results["sft"]["mean_ses"], 4,
+        )
+    if "baseline" in results and "rl" in results:
+        improvement["rl_over_baseline_ses_delta"] = round(
+            results["rl"]["mean_ses"] - results["baseline"]["mean_ses"], 4,
+        )
+
+    return {
+        "scenario": scenario_name,
+        "seed":     seed,
+        "results":  results,
+        "improvement": improvement,
+    }
+
+
+@app.get("/agent/compare/snapshot", tags=["Agent Comparison"])
+def agent_compare_snapshot():
+    """Return the cached comparison_results.json if the inference comparison
+    script has been run. The dashboard uses this for the "Before vs After
+    RL" panel without needing the model checkpoints loaded server-side."""
+    snap_path = Path(__file__).resolve().parent.parent / "data" / "comparison_results.json"
+    if not snap_path.is_file():
+        return {"status": "no_snapshot",
+                "hint": "run `python inference_comparison.py` first"}
+    try:
+        return {"status": "ok",
+                "results": json.loads(snap_path.read_text(encoding="utf-8"))}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "error": str(e)}
 
 
 @app.post("/agent/run_episode", tags=["Agent"])

@@ -115,6 +115,63 @@
     </div>
 </section>
 
+<!-- ╭──── Before vs After RL (judging criterion #3) ──────────────╮ -->
+<section class="card panel compare-panel">
+    <h2>Before vs After RL <span class="tagline">baseline · SFT · RL</span></h2>
+    <p class="hint">Hackathon judging criterion #3 (20%): observable evidence the agent learned. This panel runs the
+    same scenarios through the loaded runtimes (rule-based baseline / SFT-only model / RL-trained model) and
+    shows how SES, WRR, and parse-failures change. Either point the server at local checkpoints
+    (<code>SFT_MODEL_PATH</code>, <code>RL_MODEL_PATH</code>) or pre-bake a snapshot via
+    <code>python inference_comparison.py</code> on Kaggle.</p>
+
+    <div class="compare-toolbar">
+        <span id="compare-runtimes-badge" class="mono small">checking runtimes...</span>
+        <label>Scenario:
+            <select id="compare-scenario">
+                <option value="STABLE_WEEK">STABLE_WEEK</option>
+                <option value="BUSY_WEEKEND">BUSY_WEEKEND</option>
+                <option value="FARMER_WEEK" selected>FARMER_WEEK</option>
+                <option value="TREND_WEEK">TREND_WEEK</option>
+                <option value="CRISIS_WEEK">CRISIS_WEEK</option>
+            </select>
+        </label>
+        <label>Briefs:
+            <input id="compare-max-briefs" type="number" min="1" max="84" value="6" style="width:62px;">
+        </label>
+        <label>Seed:
+            <input id="compare-seed" type="number" min="0" value="42" style="width:80px;">
+        </label>
+        <button id="compare-run-btn" type="button">Run live comparison</button>
+        <button id="compare-load-snapshot-btn" type="button" class="secondary">Load saved snapshot</button>
+        <span id="compare-status" class="mono small"></span>
+    </div>
+
+    <div class="compare-grid">
+        <div class="compare-stat">
+            <div class="compare-stat-label">SFT vs Baseline (SES Δ)</div>
+            <div id="compare-stat-sft" class="compare-stat-value">—</div>
+        </div>
+        <div class="compare-stat">
+            <div class="compare-stat-label">RL vs SFT (SES Δ)</div>
+            <div id="compare-stat-rl" class="compare-stat-value">—</div>
+        </div>
+        <div class="compare-stat">
+            <div class="compare-stat-label">RL vs Baseline (SES Δ)</div>
+            <div id="compare-stat-total" class="compare-stat-value">—</div>
+        </div>
+    </div>
+
+    <div class="compare-chart">
+        <div class="compare-chart-header"><span>Mean SES per scenario (higher = better)</span></div>
+        <div id="compare-chart-rows"></div>
+    </div>
+
+    <div class="compare-briefs">
+        <div class="compare-briefs-header"><span>Side-by-side brief samples</span></div>
+        <div id="compare-briefs-grid"></div>
+    </div>
+</section>
+
 <!-- ╭──── Live demo runner (drive Theater with the trained agent) ───╮ -->
 <section class="card panel agent-runner">
     <h2>Run live demo <span class="tagline">trained agent &rarr; theater</span></h2>

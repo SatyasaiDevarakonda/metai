@@ -1416,6 +1416,95 @@ print('values printed by env smoke cells (5c..5h) are NOT training results.')
 """
 
 
+CELL_COMPARISON_MD = """\
+## Section 13f -- Before vs After RL inference comparison
+
+Hackathon judging criterion #3 (Showing Improvement in Rewards, 20%):
+"comparison against a baseline -- anything that proves the agent
+learned something". This cell runs `inference_comparison.py` against
+three scenarios with both the SFT-only checkpoint AND the RL-trained
+(REINFORCE+DPO) checkpoint, plus the rule-based heuristic baseline.
+
+Output: `data/comparison_results.json` -- this is what the dashboard's
+"Before vs After RL" panel reads (button: "Load saved snapshot"). The
+JSON carries per-scenario mean SES, anti-hack counts, and side-by-side
+brief samples for each runtime.
+
+Skipped automatically if the SFT or DPO checkpoint paths are missing.
+"""
+
+CELL_COMPARISON_CODE = """\
+# ============================================================
+# CELL 13f -- INFERENCE COMPARISON (before vs after RL)
+# Runs inference_comparison.py and writes data/comparison_results.json.
+# Skips if a checkpoint is missing.
+# ============================================================
+
+import os, sys, subprocess
+sys.path.insert(0, REPO_DIR)
+
+sft_path = SFT_DIR if 'SFT_DIR' in dir() and os.path.isdir(SFT_DIR) else None
+rl_path  = (
+    DPO_DIR if 'DPO_DIR' in dir() and os.path.isdir(DPO_DIR)
+    else (FINAL_DIR if 'FINAL_DIR' in dir() and os.path.isdir(FINAL_DIR)
+          else (CURRENT_CHECKPOINT if 'CURRENT_CHECKPOINT' in dir()
+                and os.path.isdir(CURRENT_CHECKPOINT) else None))
+)
+
+if not sft_path and not rl_path:
+    print('SKIP: no SFT or RL checkpoint available. Run cells 9 / 9b / 12 first.')
+    print(\"      The comparison can also be run later from a shell with:\")
+    print(\"        python inference_comparison.py --sft-path <path> --rl-path <path>\")
+else:
+    cmd = [sys.executable, os.path.join(REPO_DIR, 'inference_comparison.py'),
+           '--scenarios', 'STABLE_WEEK', 'FARMER_WEEK', 'TREND_WEEK', 'CRISIS_WEEK',
+           '--episodes-per-scenario', '2',
+           '--max-briefs', '6',
+           '--out', os.path.join(WORK_DIR, 'comparison_results.json')]
+    if sft_path:
+        cmd += ['--sft-path', sft_path]
+        print(f'   SFT checkpoint : {sft_path}')
+    if rl_path:
+        cmd += ['--rl-path', rl_path]
+        print(f'   RL  checkpoint : {rl_path}')
+    print()
+    print('Running inference_comparison.py...')
+    print('-' * 70)
+    out = subprocess.run(cmd, capture_output=True, text=True,
+                         env={**os.environ, 'PYTHONPATH': REPO_DIR})
+    print(out.stdout)
+    if out.returncode != 0:
+        print('STDERR:', out.stderr[-2000:])
+    else:
+        # Load + summarise.
+        import json
+        snap_path = os.path.join(WORK_DIR, 'comparison_results.json')
+        if os.path.isfile(snap_path):
+            data = json.loads(open(snap_path, encoding='utf-8').read())
+            print(f'Wrote {snap_path}  ({len(data[\"per_scenario\"])} scenarios, '
+                  f'{len(data[\"runtimes\"])} runtimes)')
+            print()
+            print('Improvement summary (mean SES delta across scenarios):')
+            for k, v in (data.get('improvement') or {}).items():
+                arrow = '↑' if v >= 0 else '↓'
+                print(f'  {k:35s} : {arrow} {v:+.4f}')
+            print()
+            print('Per-scenario mean SES:')
+            print(f'  {\"Scenario\":<14s} {\"baseline\":>10s} {\"sft\":>10s} {\"rl\":>10s}')
+            print('  ' + '-' * 45)
+            for s, runs in data['per_scenario'].items():
+                row = [s]
+                for n in ('baseline','sft','rl'):
+                    v = (runs.get(n) or {}).get('mean_ses')
+                    row.append(f'{v:+.4f}' if v is not None else '-')
+                print(f'  {row[0]:<14s} {row[1]:>10s} {row[2]:>10s} {row[3]:>10s}')
+            print()
+            print('Done. Open http://localhost:8000 -> Before-vs-After-RL panel ->')
+            print('Load saved snapshot, OR copy comparison_results.json to data/')
+            print('in your local clone before starting the FastAPI dashboard.')
+"""
+
+
 CELL_USE_WEIGHTS_MD = """\
 ## Section 13 -- Use Your Trained Weights in the Dashboard
 
@@ -1729,6 +1818,13 @@ def main() -> None:
     insert_cell_after(nb, after_cell_id="cell-ses-per-scenario-md",
                       new_cell_id="cell-ses-per-scenario",
                       cell_type="code", source=CELL_SES_PER_SCENARIO_CODE)
+    # Before vs After RL comparison.
+    insert_cell_after(nb, after_cell_id="cell-ses-per-scenario",
+                      new_cell_id="cell-comparison-md",
+                      cell_type="markdown", source=CELL_COMPARISON_MD)
+    insert_cell_after(nb, after_cell_id="cell-comparison-md",
+                      new_cell_id="cell-comparison",
+                      cell_type="code", source=CELL_COMPARISON_CODE)
     insert_cell_after(nb, after_cell_id="cell-hf-push",
                       new_cell_id="cell-use-weights-md",
                       cell_type="markdown", source=CELL_USE_WEIGHTS_MD)

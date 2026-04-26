@@ -132,6 +132,38 @@ each value was picked.
 
 ---
 
+## Before vs After RL — the comparison judges want to see
+
+Hackathon judging criterion #3 (Showing Improvement in Rewards, 20%)
+explicitly asks for *"comparison against a baseline — anything that
+proves the agent learned something"*. That comparison ships as a
+first-class feature:
+
+| Layer | What it does | Where |
+|---|---|---|
+| **CLI** | runs same scenarios with 3 runtimes (rule-based **baseline**, **SFT-only**, **RL-trained**), dumps JSON | [`inference_comparison.py`](inference_comparison.py) |
+| **Server endpoints** | `GET /agent/compare/info`, `POST /agent/compare/brief`, `POST /agent/compare/episode`, `GET /agent/compare/snapshot` | [`server/app.py`](server/app.py) |
+| **Dashboard panel** | "Before vs After RL" at the top of `http://localhost:8000`: SES bar chart per scenario × runtime, three ΔSES stat boxes, side-by-side brief grid | [`static/v2/index.html`](static/v2/index.html) |
+| **Notebook cell** | Section 13f auto-runs the comparison once training finishes | [`kaggle_qstoreprice.ipynb`](kaggle_qstoreprice.ipynb) cell `cell-comparison` |
+| **Snorkel-bonus agent** | ExpertAgent that intervenes on ~15% of decisions with preference drift after episode 10 — the comparison rig has something to detect | [`freshprice_env/agents/expert_agent.py`](freshprice_env/agents/expert_agent.py) |
+
+CLI usage after training:
+
+```bash
+python inference_comparison.py \
+    --sft-path  /kaggle/working/checkpoints/sft_v1 \
+    --rl-path   /kaggle/working/checkpoints/dpo_round1 \
+    --scenarios STABLE_WEEK FARMER_WEEK CRISIS_WEEK \
+    --episodes-per-scenario 3 --max-briefs 8
+# -> data/comparison_results.json
+```
+
+Then start the FastAPI server and click **"Load saved snapshot"** in
+the comparison panel; the bar chart fills in immediately, no model
+checkpoint needs to be loaded server-side.
+
+---
+
 ## Hackathon submission checklist
 
 | Requirement | Status | Where |

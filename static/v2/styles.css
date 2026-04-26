@@ -284,6 +284,108 @@ button:hover:not(:disabled) { transform: translateY(-1px); }
 .composer-bar .name { color: var(--fg-1); }
 .composer-bar .rate { color: var(--warn); }
 
+/* ───────── Before vs After RL comparison ───────── */
+.compare-panel .hint { color: var(--fg-2); font-size: 12px; margin: 4px 0 12px; }
+.compare-panel .hint code { font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    background: rgba(255,255,255,0.06); padding: 1px 4px; border-radius: 3px; }
+.compare-toolbar {
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    background: rgba(255,255,255,0.02); padding: 10px 14px; border-radius: 10px;
+    margin-bottom: 14px;
+}
+.compare-toolbar label { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--fg-2); }
+.compare-toolbar select, .compare-toolbar input {
+    background: rgba(255,255,255,0.06); color: var(--fg-1);
+    border: 1px solid rgba(255,255,255,0.10);
+    padding: 4px 8px; border-radius: 6px;
+}
+.compare-toolbar button {
+    background: var(--accent, #6366f1); color: #fff; border: none;
+    padding: 6px 16px; border-radius: 6px; cursor: pointer; font-weight: 500;
+}
+.compare-toolbar button.secondary {
+    background: rgba(255,255,255,0.08); color: var(--fg-1);
+}
+.compare-toolbar button:disabled { opacity: 0.45; cursor: default; }
+#compare-runtimes-badge { color: var(--fg-1); }
+#compare-status { color: var(--fg-1); }
+
+.compare-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px; margin-bottom: 14px;
+}
+.compare-stat {
+    background: rgba(255,255,255,0.03); padding: 12px 14px; border-radius: 10px;
+    text-align: center;
+}
+.compare-stat-label {
+    font-size: 11px; color: var(--fg-2); text-transform: uppercase;
+    letter-spacing: 0.10em;
+}
+.compare-stat-value {
+    font-size: 22px; color: var(--fg-1); font-family: 'JetBrains Mono', monospace;
+    margin-top: 4px;
+}
+.compare-stat-value.positive { color: #10b981; }
+.compare-stat-value.negative { color: #ef4444; }
+
+.compare-chart {
+    background: rgba(255,255,255,0.03); padding: 12px 14px; border-radius: 10px;
+    margin-bottom: 14px;
+}
+.compare-chart-header {
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.10em;
+    color: var(--fg-1); margin-bottom: 10px;
+}
+.compare-row {
+    display: grid; grid-template-columns: 110px 80px 1fr 50px;
+    gap: 8px; align-items: center; padding: 4px 0;
+    font-size: 11px;
+}
+.compare-row .scen { color: var(--fg-2); font-family: 'JetBrains Mono', monospace; }
+.compare-row .name { color: var(--fg-2); }
+.compare-row .bar-track {
+    height: 12px; border-radius: 6px; background: rgba(255,255,255,0.06);
+    overflow: hidden;
+}
+.compare-row .bar-fill { height: 100%; transition: width 200ms ease; }
+.compare-row .bar-fill.baseline { background: #94a3b8; }
+.compare-row .bar-fill.sft      { background: #fbbf24; }
+.compare-row .bar-fill.rl       { background: #10b981; }
+.compare-row .pct {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    text-align: right; color: var(--fg-1);
+}
+
+.compare-briefs {
+    background: rgba(255,255,255,0.03); padding: 12px 14px; border-radius: 10px;
+}
+.compare-briefs-header {
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.10em;
+    color: var(--fg-1); margin-bottom: 10px;
+}
+#compare-briefs-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 10px;
+}
+.compare-brief-cell {
+    background: rgba(255,255,255,0.02); border-radius: 8px;
+    padding: 10px 12px; min-width: 0;
+}
+.compare-brief-cell .runtime-tag {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.10em;
+    margin-bottom: 6px; display: inline-block; padding: 2px 6px;
+    border-radius: 4px; color: #1c1917; font-weight: 600;
+}
+.compare-brief-cell .runtime-tag.baseline { background: #94a3b8; }
+.compare-brief-cell .runtime-tag.sft      { background: #fbbf24; }
+.compare-brief-cell .runtime-tag.rl       { background: #10b981; color: #fff; }
+.compare-brief-cell pre {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: var(--fg-1); white-space: pre-wrap; max-height: 200px;
+    overflow: auto; margin: 0;
+}
+
 /* ───────── Agent live-demo runner ───────── */
 .agent-runner .hint { color: var(--fg-2); font-size: 12px; margin: 4px 0 12px; }
 .agent-runner-row {

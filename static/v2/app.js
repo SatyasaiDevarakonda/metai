@@ -521,6 +521,170 @@ theater.els.whatif.addEventListener("click", () => {
     });
 });
 
+// ───────── Before vs After RL comparison ─────────
+//
+// Drives the "compare" panel: runs the same scenario through every loaded
+// runtime (baseline / sft / rl) and renders the SES-per-scenario bar
+// chart, per-runtime SES delta stats, and a side-by-side brief grid.
+// The "Load saved snapshot" button reads the JSON produced by
+// inference_comparison.py from the server -- so the panel works even
+// when the heavy local-model backends are not loaded.
+
+const compareEls = {
+    badge:    $("compare-runtimes-badge"),
+    scenario: $("compare-scenario"),
+    maxBriefs:$("compare-max-briefs"),
+    seed:     $("compare-seed"),
+    runBtn:   $("compare-run-btn"),
+    snapBtn:  $("compare-load-snapshot-btn"),
+    status:   $("compare-status"),
+    statSft:    $("compare-stat-sft"),
+    statRl:     $("compare-stat-rl"),
+    statTotal:  $("compare-stat-total"),
+    chartRows:  $("compare-chart-rows"),
+    briefsGrid: $("compare-briefs-grid"),
+};
+
+const RUNTIME_COLOURS = ["baseline", "sft", "rl"];
+
+async function refreshCompareInfo() {
+    if (!compareEls.badge) return;
+    try {
+        const r = await fetch("/agent/compare/info");
+        const data = await r.json();
+        if (data.status === "ready") {
+            compareEls.badge.textContent =
+                `runtimes loaded: ${data.names.join(" + ") || "(none)"}`;
+        } else {
+            compareEls.badge.textContent = `error: ${data.error || "not ready"}`;
+        }
+    } catch (e) { compareEls.badge.textContent = "offline"; }
+}
+refreshCompareInfo();
+
+function renderImprovement(imp) {
+    const setStat = (el, val) => {
+        if (!el) return;
+        if (val == null) { el.textContent = "—"; el.classList.remove("positive","negative"); return; }
+        el.textContent = (val >= 0 ? "+" : "") + val.toFixed(3);
+        el.classList.toggle("positive", val >= 0);
+        el.classList.toggle("negative", val < 0);
+    };
+    setStat(compareEls.statSft,   imp?.sft_over_baseline_ses_delta);
+    setStat(compareEls.statRl,    imp?.rl_over_sft_ses_delta);
+    setStat(compareEls.statTotal, imp?.rl_over_baseline_ses_delta);
+}
+
+function renderCompareChart(perScenario) {
+    if (!compareEls.chartRows) return;
+    // Find max SES across all rows so bars share a scale; min 0.05 so empty runs still render.
+    let maxSes = 0.05;
+    for (const scen of Object.keys(perScenario)) {
+        for (const name of Object.keys(perScenario[scen] || {})) {
+            const v = perScenario[scen][name]?.mean_ses;
+            if (typeof v === "number" && v > maxSes) maxSes = v;
+        }
+    }
+    const rows = [];
+    for (const scen of Object.keys(perScenario)) {
+        for (const name of RUNTIME_COLOURS) {
+            const r = perScenario[scen]?.[name];
+            if (!r) continue;
+            const ses = Number(r.mean_ses ?? 0);
+            const widthPct = Math.max(2, Math.min(100, (ses / maxSes) * 100));
+            rows.push(`<div class="compare-row">
+                <span class="scen">${escapeHTML(scen)}</span>
+                <span class="name">${escapeHTML(name)}</span>
+                <div class="bar-track"><div class="bar-fill ${escapeHTML(name)}" style="width:${widthPct.toFixed(0)}%"></div></div>
+                <span class="pct">${(ses >= 0 ? "+" : "") + ses.toFixed(3)}</span>
+            </div>`);
+        }
+    }
+    compareEls.chartRows.innerHTML = rows.join("") ||
+        "<span style=\"color:var(--fg-2);font-size:11px;\">no comparison data yet</span>";
+}
+
+function renderBriefsGrid(perScenario, scenarioName) {
+    if (!compareEls.briefsGrid) return;
+    const data = perScenario?.[scenarioName] || {};
+    const cells = [];
+    for (const name of RUNTIME_COLOURS) {
+        const r = data[name];
+        if (!r) continue;
+        const samples = r.sample_briefs || [];
+        const sample = samples[0] || "(no sample brief recorded)";
+        cells.push(`<div class="compare-brief-cell">
+            <span class="runtime-tag ${escapeHTML(name)}">${escapeHTML(name)}</span>
+            <pre>${escapeHTML(sample)}</pre>
+        </div>`);
+    }
+    compareEls.briefsGrid.innerHTML = cells.join("") ||
+        "<span style=\"color:var(--fg-2);font-size:11px;\">run a comparison or load a snapshot to populate this</span>";
+}
+
+if (compareEls.runBtn) {
+    compareEls.runBtn.addEventListener("click", async () => {
+        compareEls.runBtn.disabled = true;
+        compareEls.status.textContent = "running comparison...";
+        try {
+            const r = await fetch("/agent/compare/episode", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    scenario:   compareEls.scenario.value,
+                    seed:       Number(compareEls.seed.value) || 42,
+                    max_briefs: Number(compareEls.maxBriefs.value) || 6,
+                }),
+            });
+            const data = await r.json();
+            if (data.error) {
+                compareEls.status.textContent = "error: " + data.error;
+            } else {
+                const scen = data.scenario;
+                const perScenario = { [scen]: data.results };
+                renderImprovement(data.improvement);
+                renderCompareChart(perScenario);
+                renderBriefsGrid(perScenario, scen);
+                compareEls.status.textContent = "live: " + scen;
+            }
+        } catch (e) {
+            compareEls.status.textContent = "error: " + e.message;
+        } finally {
+            compareEls.runBtn.disabled = false;
+        }
+    });
+}
+
+if (compareEls.snapBtn) {
+    compareEls.snapBtn.addEventListener("click", async () => {
+        compareEls.snapBtn.disabled = true;
+        compareEls.status.textContent = "loading snapshot...";
+        try {
+            const r = await fetch("/agent/compare/snapshot");
+            const data = await r.json();
+            if (data.status !== "ok") {
+                compareEls.status.textContent = "snapshot: " + (data.hint || data.error || data.status);
+                return;
+            }
+            const snap = data.results;
+            renderImprovement(snap.improvement);
+            renderCompareChart(snap.per_scenario || {});
+            // Render briefs from the currently-selected scenario, falling
+            // back to the first scenario in the snapshot.
+            const want = compareEls.scenario.value;
+            const scenarios = snap.scenarios || Object.keys(snap.per_scenario || {});
+            const chosen = scenarios.includes(want) ? want : scenarios[0];
+            if (chosen) renderBriefsGrid(snap.per_scenario || {}, chosen);
+            compareEls.status.textContent = `snapshot loaded (${scenarios.length} scenarios, ` +
+                `produced ${snap.produced_at || "—"})`;
+        } catch (e) {
+            compareEls.status.textContent = "error: " + e.message;
+        } finally {
+            compareEls.snapBtn.disabled = false;
+        }
+    });
+}
+
 // ───────── Agent live-demo runner ─────────
 const agentEls = {
     badge:    $("agent-info-badge"),
