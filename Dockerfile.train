@@ -1,0 +1,105 @@
+# Dockerfile for the *training* HF Space (GPU).
+#
+# Built when you `git push space main` to a Space configured as:
+#   - SDK: docker
+#   - Hardware: A10G small (recommended) / T4 small / A100
+#   - Secrets: HF_TOKEN, HF_REPO_ID
+#
+# Behaviour: pip-installs deps, then runs the full SFT->REINFORCE->DPO
+# pipeline once and pushes the merged checkpoint to the HF Hub repo
+# named in $HF_REPO_ID. After training completes, a tiny FastAPI
+# heartbeat server keeps the Space alive so the logs remain visible.
+#
+# Build the image locally to test:
+#   docker build -f Dockerfile.train -t qstoreprice-train .
+# Run it (with a real GPU + token):
+#   docker run --gpus all -e HF_TOKEN=$HF_TOKEN -e HF_REPO_ID=$HF_REPO_ID \
+#              qstoreprice-train
+
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TRANSFORMERS_NO_ADVISORY_WARNINGS=1 \
+    HF_HUB_DISABLE_TELEMETRY=1
+
+# System deps + Python 3.10 (matches Kaggle / colab to maximise wheel reuse).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common ca-certificates curl git build-essential \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        python3.10 python3.10-venv python3.10-dev python3-pip \
+    && ln -sf /usr/bin/python3.10 /usr/local/bin/python \
+    && ln -sf /usr/bin/python3.10 /usr/local/bin/python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make sure pip is up to date for python3.10.
+RUN python -m pip install --upgrade pip setuptools wheel
+
+WORKDIR /app
+
+# Pin transformers BEFORE unsloth/unsloth_zoo (same fix as the Kaggle cell).
+RUN pip install "transformers>=4.46.0,<4.55.0"
+
+# Copy + install dep manifests first so pip layer is cacheable.
+COPY requirements.txt requirements_training.txt pyproject.toml ./
+RUN pip install -r requirements.txt
+RUN pip install -r requirements_training.txt
+
+# Install unsloth_zoo with --no-deps so it can't yank in a newer
+# transformers and break the chain.
+RUN pip install --no-cache-dir --no-deps --upgrade unsloth_zoo
+
+# Copy the rest of the project (.dockerignore strips junk).
+COPY . .
+
+# Install the project as a package so `from server.agent_runtime ...`
+# and `from freshprice_env...` work.
+RUN pip install --no-cache-dir -e .
+
+# HF Spaces expects the container to listen on $PORT (default 7860). We
+# launch a heartbeat server in the background, run training to
+# completion, then keep the heartbeat alive so logs stay visible.
+ENV PORT=7860
+EXPOSE 7860
+
+# Entry script: starts heartbeat, runs training, blocks forever.
+RUN cat > /app/run_space.sh <<'EOF'
+#!/usr/bin/env bash
+set -e
+
+# 1. Tiny heartbeat HTTP server in the background -- keeps Space "Running"
+#    and lets you tail logs from the browser.
+python - <<'PY' &
+import http.server, socketserver, os
+PORT = int(os.environ.get("PORT", "7860"))
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"qstoreprice-train: alive\n")
+    def log_message(self, *a, **k): pass
+with socketserver.TCPServer(("", PORT), H) as httpd:
+    print(f"[heartbeat] listening on :{PORT}", flush=True)
+    httpd.serve_forever()
+PY
+HEARTBEAT_PID=$!
+
+# 2. Run the full training pipeline. --push-to-hub uploads the final
+#    merged checkpoint to $HF_REPO_ID.
+echo "[train] starting full pipeline ..."
+python scripts/train_full_pipeline.py --push-to-hub
+echo "[train] done. weights pushed to $HF_REPO_ID"
+
+# 3. Keep the heartbeat alive so the Space stays "Running" and logs
+#    remain readable. Without this, the container exits and the Space
+#    flips to "Error".
+echo "[idle] training complete -- heartbeat is keeping the Space alive."
+echo "[idle] grab your weights:  huggingface-cli download $HF_REPO_ID"
+wait $HEARTBEAT_PID
+EOF
+RUN chmod +x /app/run_space.sh
+
+CMD ["/app/run_space.sh"]
