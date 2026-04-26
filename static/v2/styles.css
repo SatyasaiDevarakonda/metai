@@ -284,6 +284,226 @@ button:hover:not(:disabled) { transform: translateY(-1px); }
 .composer-bar .name { color: var(--fg-1); }
 .composer-bar .rate { color: var(--warn); }
 
+/* ───────── Project Atlas ───────── */
+.atlas-panel .hint { color: var(--fg-2); font-size: 12px; margin: 4px 0 12px; }
+.atlas-panel .hint code { font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    background: rgba(255,255,255,0.06); padding: 1px 4px; border-radius: 3px; }
+.atlas-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+}
+.atlas-block {
+    background: rgba(255,255,255,0.03); padding: 12px 14px; border-radius: 10px;
+    min-height: 200px;
+}
+.atlas-block-header {
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.10em;
+    color: var(--fg-1); margin-bottom: 10px;
+}
+.atlas-row {
+    padding: 4px 0; border-bottom: 1px dashed rgba(255,255,255,0.06);
+    font-size: 11.5px;
+}
+.atlas-row:last-child { border-bottom: 0; }
+.atlas-row .name {
+    font-family: 'JetBrains Mono', monospace; font-weight: 600;
+    color: var(--fg-1); display: block;
+}
+.atlas-row .role { color: var(--fg-2); font-size: 11px; display: block; margin-top: 2px; }
+.atlas-row .tag {
+    display: inline-block; font-size: 9.5px; letter-spacing: 0.06em;
+    padding: 1px 6px; border-radius: 3px; vertical-align: 1px; margin-left: 6px;
+    background: rgba(99,102,241,0.20); color: #c7d2fe;
+}
+.atlas-row .tag.trained { background: rgba(16,185,129,0.20); color: #6ee7b7; }
+.atlas-row.reward .pos { color: #10b981; font-size: 11px; display: block; }
+.atlas-row.reward .neg { color: #ef4444; font-size: 11px; display: block; }
+.atlas-row.reward .weight {
+    float: right; font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: #fbbf24; padding: 1px 6px; border-radius: 3px;
+    background: rgba(251,191,36,0.10);
+}
+.atlas-scenario {
+    display: inline-block; margin: 2px 4px 2px 0;
+    background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 12px;
+    font-size: 10px; font-family: 'JetBrains Mono', monospace; color: var(--fg-1);
+}
+
+/* ───────── Live reward signal ───────── */
+.reward-signal-panel .hint { color: var(--fg-2); font-size: 12px; margin: 4px 0 12px; }
+.reward-gauges {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+}
+.reward-gauge {
+    background: rgba(255,255,255,0.03); padding: 10px 12px; border-radius: 10px;
+    transition: box-shadow 200ms;
+}
+.reward-gauge.headline {
+    grid-column: span 2;
+    background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(16,185,129,0.10));
+    border: 1px solid rgba(99,102,241,0.30);
+}
+.reward-gauge.flash-red { box-shadow: 0 0 0 2px #ef4444; animation: rewardFlash 800ms 1; }
+@keyframes rewardFlash {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+    50%      { box-shadow: 0 0 0 3px rgba(239,68,68,0.7); }
+}
+.gauge-label {
+    font-size: 11px; color: var(--fg-2); text-transform: uppercase;
+    letter-spacing: 0.10em;
+}
+.gauge-label .weight {
+    float: right; font-family: 'JetBrains Mono', monospace;
+    background: rgba(251,191,36,0.10); color: #fbbf24;
+    padding: 1px 5px; border-radius: 3px; font-size: 10px;
+}
+.gauge-value { font-size: 22px; color: var(--fg-1); margin: 4px 0; }
+.gauge-bar {
+    height: 6px; border-radius: 3px; background: rgba(255,255,255,0.06);
+    overflow: hidden;
+}
+.gauge-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, #6366f1, #10b981);
+    transition: width 250ms ease;
+}
+.gauge-fill.r1 { background: #60a5fa; }
+.gauge-fill.r2 { background: #34d399; }
+.gauge-fill.r3 { background: #fbbf24; }
+.gauge-fill.r4 { background: #a78bfa; }
+.gauge-fill.r5 { background: #f87171; }
+.gauge-fill.r6 { background: #22d3ee; }
+.gauge-fill.r7 { background: #facc15; }
+.gauge-fill.negative { background: #ef4444; }
+.gauge-hint { font-size: 10.5px; color: var(--fg-2); margin-top: 2px; }
+.reward-alerts {
+    margin-top: 14px; padding-top: 12px;
+    border-top: 1px dashed rgba(255,255,255,0.08);
+}
+.reward-alerts-label {
+    font-size: 11px; color: var(--fg-2); text-transform: uppercase;
+    letter-spacing: 0.10em;
+}
+.reward-alerts-list {
+    margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+}
+.reward-alerts-list .alert-pill {
+    background: rgba(239,68,68,0.20); color: #fecaca;
+    padding: 3px 8px; border-radius: 4px;
+    border: 1px solid rgba(239,68,68,0.40);
+}
+.reward-alerts-list .muted { color: var(--fg-2); }
+
+/* ───────── RL Training Telemetry ───────── */
+.training-panel .hint { color: var(--fg-2); font-size: 12px; margin: 4px 0 12px; }
+.training-panel .hint code { font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    background: rgba(255,255,255,0.06); padding: 1px 4px; border-radius: 3px; }
+.training-grid {
+    display: grid; grid-template-columns: 200px 1fr;
+    gap: 14px; margin-bottom: 12px;
+}
+.training-stages {
+    display: flex; flex-direction: column; gap: 8px;
+}
+.training-stage {
+    background: rgba(255,255,255,0.03); padding: 10px 12px; border-radius: 8px;
+    display: flex; justify-content: space-between; align-items: center;
+    transition: all 200ms;
+}
+.training-stage.active {
+    background: linear-gradient(135deg, rgba(99,102,241,0.20), rgba(16,185,129,0.10));
+    border: 1px solid rgba(99,102,241,0.40);
+}
+.training-stage.done {
+    background: rgba(16,185,129,0.10);
+    border: 1px solid rgba(16,185,129,0.30);
+}
+.stage-name {
+    font-size: 11.5px; color: var(--fg-1);
+    text-transform: uppercase; letter-spacing: 0.06em;
+}
+.stage-status { font-size: 16px; }
+.training-stage.active .stage-status { color: #fbbf24; animation: pulse 1.5s infinite; }
+.training-stage.done .stage-status { color: #10b981; }
+@keyframes pulse {
+    50% { opacity: 0.4; }
+}
+.training-curves {
+    background: rgba(0,0,0,0.30); border-radius: 10px; padding: 10px 12px;
+    min-height: 200px; position: relative;
+}
+#training-loss-canvas {
+    width: 100%; height: 180px; display: block;
+}
+.training-meta {
+    margin-top: 6px; font-size: 11px; color: var(--fg-1);
+    font-family: 'JetBrains Mono', monospace;
+}
+.training-meta .muted { color: var(--fg-2); }
+.training-buffer {
+    margin-top: 8px; padding-top: 12px;
+    border-top: 1px dashed rgba(255,255,255,0.08);
+    display: grid; grid-template-columns: 220px 1fr 100px;
+    align-items: center; gap: 8px;
+}
+.buffer-label { font-size: 11px; color: var(--fg-2); }
+.buffer-bar {
+    height: 10px; border-radius: 5px; background: rgba(255,255,255,0.06);
+    overflow: hidden;
+}
+#buffer-fill {
+    height: 100%; width: 0%; background: linear-gradient(90deg, #ef4444, #fbbf24, #10b981);
+    transition: width 200ms ease;
+}
+#buffer-text { font-size: 11px; color: var(--fg-1); text-align: right; }
+
+/* ───────── Decision Flow ───────── */
+.decision-flow-panel .hint { color: var(--fg-2); font-size: 12px; margin: 4px 0 12px; }
+.flow-stages {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+.flow-stage {
+    background: rgba(255,255,255,0.03); padding: 10px 12px; border-radius: 10px;
+    min-width: 0;
+}
+.flow-stage-header {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.10em;
+    color: var(--fg-2); margin-bottom: 8px;
+}
+.flow-body {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: var(--fg-1); white-space: pre-wrap; max-height: 280px;
+    overflow: auto; margin: 0;
+}
+.flow-body .section-header {
+    color: #60a5fa; text-transform: uppercase; font-weight: 600; margin-top: 6px;
+}
+.flow-body .section-body { color: var(--fg-1); margin-bottom: 4px; }
+.flow-rewards .reward-line {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 3px 6px; border-radius: 4px; margin-bottom: 4px;
+    font-size: 11px;
+}
+.flow-rewards .reward-line.positive { background: rgba(16,185,129,0.10); color: #6ee7b7; }
+.flow-rewards .reward-line.negative { background: rgba(239,68,68,0.10);  color: #fca5a5; }
+.flow-rewards .reward-line.zero     { background: rgba(255,255,255,0.04); color: var(--fg-2); }
+.flow-rewards .reward-line .name { font-weight: 600; }
+.flow-rewards .reward-line .val { font-family: 'JetBrains Mono', monospace; }
+.flow-learn-line { font-size: 11px; color: var(--fg-1); margin-bottom: 4px; }
+.flow-learn-line .muted { color: var(--fg-2); }
+.flow-learn-line .key {
+    color: #fbbf24; font-family: 'JetBrains Mono', monospace; margin-right: 6px;
+}
+
+@media (max-width: 1100px) {
+    .flow-stages { grid-template-columns: 1fr; }
+    .training-grid { grid-template-columns: 1fr; }
+}
+
 /* ───────── Before vs After RL comparison ───────── */
 .compare-panel .hint { color: var(--fg-2); font-size: 12px; margin: 4px 0 12px; }
 .compare-panel .hint code { font-family: 'JetBrains Mono', monospace; font-size: 11px;

@@ -554,7 +554,11 @@ def agent_brief(payload: dict):
 
 def _build_tick_frame(env_state: dict, brief_text: str, info_dict: dict) -> dict:
     """Project an env state snapshot into the lightweight frame the
-    Simulation Theater consumes."""
+    Simulation Theater + Live Reward Signal panels consume.
+
+    Carries: env state, the latest brief, all 7 engine rewards, the
+    composite SES, and any penalty/anti-hack events fired this step.
+    """
     batches_raw = env_state.get("batches") or []
     batches = []
     for b in batches_raw[:64]:    # cap to keep frames small
@@ -568,18 +572,45 @@ def _build_tick_frame(env_state: dict, brief_text: str, info_dict: dict) -> dict
             "hours_to_expiry": b.get("hours_to_expiry"),
             "quantity_remaining": b.get("quantity_remaining"),
         })
+    # Surface penalty/anti-hack events fired this step so the dashboard
+    # can flash a red alert when something interesting happens.
+    penalty_events: list[dict] = []
+    if not info_dict.get("parse_success", True):
+        penalty_events.append({"kind": "parse_fail",
+                               "magnitude": info_dict.get("parse_fail_penalty_applied", 0.0),
+                               "reason": info_dict.get("parse_failure_reason", "")})
+    if not info_dict.get("validation_success", True):
+        penalty_events.append({"kind": "validation_fail",
+                               "magnitude": info_dict.get("parse_fail_penalty_applied", 0.0),
+                               "reasons": info_dict.get("validation_errors", [])})
+    for warning in (info_dict.get("execution_warnings") or [])[:5]:
+        penalty_events.append({"kind": "execution_warning", "reason": str(warning)})
     return {
         "tick": env_state.get("tick", 0),
         "scenario": env_state.get("scenario"),
         "engine_type": info_dict.get("engine_type"),
         "batches": batches,
-        "rider_pool": _blinkit_state.get("rider_pool"),
-        "cohorts": _blinkit_state.get("cohorts"),
-        "liquidation": _blinkit_state.get("liquidation"),
+        "rider_pool": info_dict.get("rider_pool") or _blinkit_state.get("rider_pool"),
+        "cohorts": info_dict.get("cohorts") or _blinkit_state.get("cohorts"),
+        "liquidation": info_dict.get("liquidation") or _blinkit_state.get("liquidation"),
         "latest_brief": brief_text,
         "reasoning": brief_text,
         "wrr_so_far": env_state.get("wrr_so_far", 0.0),
-        "reward_this_step": info_dict.get("reward"),
+        "wrr_delta": info_dict.get("wrr_delta", 0.0),
+        "reward_this_step": float(info_dict.get("reward") or 0.0),
+        # FreshPrice 7-engine SES path -- new in tick frames.
+        "r1_pricing":    info_dict.get("r1_pricing", 0.0),
+        "r2_farmer":     info_dict.get("r2_farmer", 0.0),
+        "r3_trend":      info_dict.get("r3_trend", 0.0),
+        "r4_intrafleet": info_dict.get("r4_intrafleet", 0.0),
+        "r5_micromfg":   info_dict.get("r5_micromfg", 0.0),
+        "r6_event":      info_dict.get("r6_event", 0.0),
+        "r7_surplusbox": info_dict.get("r7_surplusbox", 0.0),
+        "store_efficiency_score": info_dict.get("store_efficiency_score", 0.0),
+        "quality_score": info_dict.get("quality_score", 0.0),
+        "parse_success": info_dict.get("parse_success", True),
+        "anti_hack_violations": info_dict.get("anti_hack_violations", 0),
+        "penalty_events": penalty_events,
     }
 
 
@@ -818,6 +849,195 @@ def agent_run_episode(payload: dict | None = None):
         "steps": step_summaries,
         "last_brief": last_brief,
     }
+
+
+# ---------------------------------------------------------------------------
+# /atlas/inventory  +  /training/status
+#
+# These two endpoints feed the new "Project Atlas", "Live Reward Signal"
+# and "RL Training Telemetry" panels the user asked for. The atlas is
+# static metadata (envs, agents, reward components, penalty constants)
+# so the dashboard can show a one-glance inventory of the project.
+# Training status is a best-effort read of the checkpoint dirs + any
+# saved REINFORCE history so the dashboard can show stage progress
+# without polling the trainer process directly.
+# ---------------------------------------------------------------------------
+
+from freshprice_env.constants import (  # noqa: E402
+    SES_WEIGHT_R1_PRICING, SES_WEIGHT_R2_FARMER, SES_WEIGHT_R3_TREND,
+    SES_WEIGHT_R4_INTRAFLEET, SES_WEIGHT_R5_MICROMFG, SES_WEIGHT_R6_EVENT,
+    SES_WEIGHT_R7_SURPLUSBOX,
+    R1_URGENCY_CLEARANCE_BONUS, R1_EXPIRED_UNIT_PENALTY,
+    R1_ANTIHACK_EARLY_DISCOUNT, R1_ANTIHACK_BELOW_FLOOR,
+    R2_CLEARED_BATCH_BONUS, R2_MISSED_OPPORTUNITY_PENALTY,
+    R2_RECKLESS_ACCEPT_PENALTY,
+    R3_PERFECT_TIMING_BONUS, R3_OVERTRADE_PENALTY,
+    R4_TRANSFER_REVENUE_BONUS, R4_RECKLESS_TRANSFER_PENALTY,
+    R5_EARLY_ROUTING_PENALTY, R5_LATE_ROUTING_PENALTY,
+    R6_EVENT_NO_STOCKOUT_BONUS, R6_EVENT_OVERSTOCK_PENALTY,
+    R7_FIVE_STAR_BONUS_PER_SUBSCRIBER, R7_CANCEL_PENALTY_PER_SUBSCRIBER,
+    PARSE_FAIL_REWARD_PENALTY, VALIDATION_FAIL_REWARD_PENALTY,
+)
+
+
+_ATLAS_INVENTORY: dict = {
+    "environments": [
+        {"name": "FreshPriceEnv", "theme": "core",
+         "role": "Single-store gym env. 7-day, 84-brief horizon."},
+        {"name": "LongHorizonFreshPriceEnv", "theme": "#2 long-horizon",
+         "role": "30-day wrapper with AgentNotebook + plan-adherence reward."},
+        {"name": "MarketCommonsEnv", "theme": "#1 multi-agent",
+         "role": "Headline env: hero + competitor + farmer pool + regulator + auditor + bus."},
+        {"name": "MultiAgentFreshPriceEnv", "theme": "#1 multi-agent",
+         "role": "Hero + reactive ConsumerCohortAgent (PREMIUM/MASS/BARGAIN)."},
+        {"name": "MultiStoreFreshPriceEnv", "theme": "#1 + Engine 4",
+         "role": "2-3 store branches with TRANSFER directives between them."},
+        {"name": "NegotiationEnv", "theme": "#4 self-play",
+         "role": "Bilateral negotiation (frozen-opponent or scripted)."},
+    ],
+    "agents": [
+        {"name": "StoreAgent", "kind": "hero", "trained": True,
+         "role": "Writes 6-section Operating Briefs. The trained Qwen LLM."},
+        {"name": "CompetitorStoreAgent", "kind": "rival", "trained": False,
+         "role": "Personas: AGGRESSIVE / COOPERATIVE / RECIPROCAL / RANDOM. Mirrors hero pricing with 1-tick lag."},
+        {"name": "FarmerAgent (pool of 5)", "kind": "supplier", "trained": False,
+         "role": "Persistent SQLite reputation; persona-driven counter-offers; trust-modulated reserves."},
+        {"name": "ConsumerCohortAgent", "kind": "consumer", "trained": False,
+         "role": "PREMIUM (18%) / MASS (62%) / BARGAIN (20%) cohorts with own elasticity, ETA + freshness tolerance."},
+        {"name": "InfluencerAgent", "kind": "signal", "trained": False,
+         "role": "Trend signals; ~half are paid promotion (hidden flag) - the agent must learn to discount paid signals."},
+        {"name": "RegulatorAgent", "kind": "rules", "trained": False,
+         "role": "Mid-episode schema drift (Patronus AI sub-prize); rewrites directive schemas."},
+        {"name": "OversightAuditor", "kind": "meta-agent", "trained": True,
+         "role": "The 7th agent. Reads bus + briefs + notebook -> trust score + narrative + recommendation."},
+        {"name": "ExpertAgent", "kind": "Snorkel sub-prize", "trained": False,
+         "role": "Intervenes on ~15% of decisions. Preference drift: REVENUE_FIRST -> WASTE_FIRST after episode 10."},
+    ],
+    "reward_components": [
+        {"id": "r1_pricing", "engine": "Pricing",
+         "weight": SES_WEIGHT_R1_PRICING,
+         "positive": f"+{R1_URGENCY_CLEARANCE_BONUS} per unit cleared within 4h of expiry",
+         "negative": f"-{R1_EXPIRED_UNIT_PENALTY} per unit expired unsold; -{R1_ANTIHACK_EARLY_DISCOUNT} early-discount; -{R1_ANTIHACK_BELOW_FLOOR} below-floor"},
+        {"id": "r2_farmer", "engine": "Farmer Offer",
+         "weight": SES_WEIGHT_R2_FARMER,
+         "positive": f"+{R2_CLEARED_BATCH_BONUS} per batch fully cleared",
+         "negative": f"-{R2_MISSED_OPPORTUNITY_PENALTY} per declined viable offer; -{R2_RECKLESS_ACCEPT_PENALTY} reckless accept"},
+        {"id": "r3_trend", "engine": "Social Trend",
+         "weight": SES_WEIGHT_R3_TREND,
+         "positive": f"+{R3_PERFECT_TIMING_BONUS} full-price sell-through",
+         "negative": f"-{R3_OVERTRADE_PENALTY} over-trade (>40% discount needed); 2x weekly velocity hard cap"},
+        {"id": "r4_intrafleet", "engine": "Intra-Fleet Rebalancing",
+         "weight": SES_WEIGHT_R4_INTRAFLEET,
+         "positive": f"+{R4_TRANSFER_REVENUE_BONUS} per unit sold post-transfer",
+         "negative": f"transfer cost; -{R4_RECKLESS_TRANSFER_PENALTY} reckless (FRESH stock)"},
+        {"id": "r5_micromfg", "engine": "Micro-Manufacturer",
+         "weight": SES_WEIGHT_R5_MICROMFG,
+         "positive": "+0.18 per legitimate routing (~35% recovery)",
+         "negative": f"-{R5_EARLY_ROUTING_PENALTY} early-routing; -{R5_LATE_ROUTING_PENALTY} late-routing"},
+        {"id": "r6_event", "engine": "Event Pre-Positioning",
+         "weight": SES_WEIGHT_R6_EVENT,
+         "positive": f"+0.18 valid lead; +{R6_EVENT_NO_STOCKOUT_BONUS} zero-stockout",
+         "negative": f"-{R6_EVENT_OVERSTOCK_PENALTY} overstock; too-late / too-early lead penalties"},
+        {"id": "r7_surplusbox", "engine": "Surplus Box",
+         "weight": SES_WEIGHT_R7_SURPLUSBOX,
+         "positive": f"+{R7_FIVE_STAR_BONUS_PER_SUBSCRIBER} per 5-star subscriber",
+         "negative": f"-{R7_CANCEL_PENALTY_PER_SUBSCRIBER} per cancellation; subscriber count drops"},
+    ],
+    "global_penalties": [
+        {"id": "PARSE_FAIL", "magnitude": PARSE_FAIL_REWARD_PENALTY,
+         "fires_on": "Brief fails 6-section format parse"},
+        {"id": "VALIDATION_FAIL", "magnitude": VALIDATION_FAIL_REWARD_PENALTY,
+         "fires_on": "Brief parses but DIRECTIVE schema invalid"},
+        {"id": "PARSE_FAIL_POSITIVE_REWARD", "magnitude": "anti-hack flag",
+         "fires_on": "parse_success=False but env produced positive WRR delta -- exploit signature"},
+    ],
+    "scenarios": [
+        {"name": "STABLE_WEEK",     "active_engines": [1]},
+        {"name": "BUSY_WEEKEND",    "active_engines": [1, 4, 6]},
+        {"name": "FARMER_WEEK",     "active_engines": [1, 2, 5]},
+        {"name": "TREND_WEEK",      "active_engines": [1, 3, 7]},
+        {"name": "CRISIS_WEEK",     "active_engines": [1, 2, 3, 4, 5, 6, 7]},
+        {"name": "REGULATORY_WEEK", "active_engines": [1, 2, 3, 4, 5, 6, 7]},
+    ],
+}
+
+
+@app.get("/atlas/inventory", tags=["Atlas"])
+def atlas_inventory():
+    """Static project inventory: every env, every agent, every reward
+    component with weight and signs, every penalty. Powers the
+    'Project Atlas' panel."""
+    return _ATLAS_INVENTORY
+
+
+# Holder for any in-process REINFORCE history pushed by training cells.
+_training_state: dict = {
+    "current_stage": "idle",     # idle | sft | rollout | reinforce | dpo | done
+    "reinforce_history": [],     # list of {step, loss, policy_loss, kl, mean_advantage}
+    "param_l1_deltas": {},       # {sft, reinforce, dpo} cumulative checkpoint L1
+    "buffer_quality": None,      # {episodes_admitted, total_briefs, scorable_briefs}
+    "last_event": None,          # short string for the UI status line
+}
+
+
+def update_training_state(**fields) -> None:
+    """Called by training scripts to push live updates into the dashboard."""
+    if "reinforce_step" in fields:
+        step = fields.pop("reinforce_step")
+        _training_state["reinforce_history"].append(step)
+        if len(_training_state["reinforce_history"]) > 200:
+            del _training_state["reinforce_history"][:-200]
+    _training_state.update(fields)
+
+
+@app.get("/training/status", tags=["Training"])
+def training_status():
+    """Live training telemetry for the RL Training Telemetry panel.
+
+    Supplements the in-process state with a best-effort scan of the
+    checkpoint dirs (so the panel works even when the training process
+    is on Kaggle and only the saved checkpoints are visible to the
+    server).
+    """
+    import os
+    state = dict(_training_state)
+    # Best-effort checkpoint scan.
+    candidates = {
+        "sft":       os.environ.get("SFT_MODEL_PATH"),
+        "reinforce": os.environ.get("REINFORCE_MODEL_PATH"),
+        "dpo":       os.environ.get("RL_MODEL_PATH"),
+    }
+    found = {}
+    for name, path in candidates.items():
+        if path and os.path.isdir(path):
+            try:
+                files = sorted(f for f in os.listdir(path) if f.endswith(".safetensors"))
+                if files:
+                    size = sum(os.path.getsize(os.path.join(path, f)) for f in files)
+                    found[name] = {"path": path, "files": len(files),
+                                   "size_mb": round(size / 1e6, 1)}
+            except Exception:  # noqa: BLE001
+                pass
+    state["checkpoints"] = found
+    state["has_history"] = len(state.get("reinforce_history", [])) > 0
+    return state
+
+
+@app.post("/training/event", tags=["Training"])
+def training_post_event(payload: dict):
+    """Endpoint training scripts (notebook cells) can POST status updates to.
+
+    Body: any subset of:
+        {
+          "current_stage": "sft" | "rollout" | "reinforce" | "dpo" | "done",
+          "reinforce_step": {"step": 1, "loss": 1.5, "policy_loss": ..., "kl": ..., "mean_advantage": ...},
+          "param_l1_deltas": {"sft": 8.1e6, "reinforce": 8.1e6, "dpo": 8.1e6},
+          "buffer_quality": {"episodes_admitted": 6, "total_briefs": 504, "scorable_briefs": 504},
+          "last_event": "REINFORCE step 12: loss=-2.61"
+        }
+    """
+    update_training_state(**(payload or {}))
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------

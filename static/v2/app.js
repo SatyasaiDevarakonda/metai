@@ -521,6 +521,301 @@ theater.els.whatif.addEventListener("click", () => {
     });
 });
 
+// ───────── Project Atlas ─────────
+//
+// Static one-glance inventory: every env, every agent, every reward
+// component with weights, every penalty. Rendered once on page load
+// from /atlas/inventory.
+
+async function loadAtlas() {
+    try {
+        const r = await fetch("/atlas/inventory");
+        const data = await r.json();
+        const envEl = $("atlas-envs");
+        const agentEl = $("atlas-agents");
+        const rewardEl = $("atlas-rewards");
+        const penaltyEl = $("atlas-penalties");
+        const scenarioEl = $("atlas-scenarios");
+        if (envEl) envEl.innerHTML = (data.environments || []).map(e =>
+            `<div class="atlas-row"><span class="name">${escapeHTML(e.name)}<span class="tag">${escapeHTML(e.theme)}</span></span><span class="role">${escapeHTML(e.role)}</span></div>`).join("");
+        if (agentEl) agentEl.innerHTML = (data.agents || []).map(a => {
+            const tag = a.trained ? `<span class="tag trained">trained</span>` : `<span class="tag">${escapeHTML(a.kind)}</span>`;
+            return `<div class="atlas-row"><span class="name">${escapeHTML(a.name)}${tag}</span><span class="role">${escapeHTML(a.role)}</span></div>`;
+        }).join("");
+        if (rewardEl) rewardEl.innerHTML = (data.reward_components || []).map(r =>
+            `<div class="atlas-row reward">
+                <span class="name">${escapeHTML(r.id)} <span class="weight">×${(r.weight ?? 0).toFixed(2)}</span></span>
+                <span class="role">${escapeHTML(r.engine)}</span>
+                <span class="pos">+ ${escapeHTML(r.positive)}</span>
+                <span class="neg">− ${escapeHTML(r.negative)}</span>
+            </div>`).join("");
+        if (penaltyEl) penaltyEl.innerHTML = (data.global_penalties || []).map(p =>
+            `<div class="atlas-row"><span class="name">${escapeHTML(p.id)} (${escapeHTML(String(p.magnitude))})</span><span class="role">${escapeHTML(p.fires_on)}</span></div>`).join("");
+        if (scenarioEl) {
+            scenarioEl.innerHTML = "<div style=\"font-size:11px;color:var(--fg-2);text-transform:uppercase;letter-spacing:0.10em;margin-bottom:4px;\">Scenario → active engines</div>"
+                + (data.scenarios || []).map(s =>
+                    `<span class="atlas-scenario">${escapeHTML(s.name)} → [${(s.active_engines || []).join(",")}]</span>`).join("");
+        }
+    } catch (e) { /* ignore */ }
+}
+loadAtlas();
+
+
+// ───────── Live Reward Signal ─────────
+//
+// Every reward gauge listens for "frame" events; when a tick frame
+// arrives the gauge updates its value + bar width and (if a penalty
+// fired) flashes red. SES is shown bigger and uses the [0..1] range
+// against the 0.70 promotion threshold.
+
+const REWARD_KEYS = [
+    "store_efficiency_score",
+    "r1_pricing", "r2_farmer", "r3_trend",
+    "r4_intrafleet", "r5_micromfg", "r6_event", "r7_surplusbox",
+];
+const REWARD_BAR_RANGE = 1.0;     // gauges normalise against [0, 1.0]
+
+function updateRewardSignal(frame) {
+    if (!frame) return;
+    document.querySelectorAll(".reward-gauge").forEach(el => {
+        const key = el.dataset.key;
+        if (!key) return;
+        const v = Number(frame[key] ?? 0);
+        const valEl = el.querySelector(".gauge-value");
+        const fill = el.querySelector(".gauge-fill");
+        if (valEl) valEl.textContent = (v >= 0 ? "+" : "") + v.toFixed(3);
+        if (fill) {
+            const pct = Math.max(2, Math.min(100, (Math.abs(v) / REWARD_BAR_RANGE) * 100));
+            fill.style.width = pct + "%";
+            fill.classList.toggle("negative", v < 0);
+        }
+    });
+    // Penalty alerts
+    const list = $("reward-alerts-list");
+    if (list) {
+        const events = frame.penalty_events || [];
+        if (events.length === 0) {
+            list.innerHTML = `<span class="muted">none this brief</span>`;
+        } else {
+            list.innerHTML = events.map(ev =>
+                `<span class="alert-pill">${escapeHTML(ev.kind)}${ev.magnitude ? " · −" + Number(ev.magnitude).toFixed(2) : ""}${ev.reason ? " · " + escapeHTML(String(ev.reason).slice(0, 60)) : ""}</span>`).join("");
+            // Flash the gauge that owns the violation type.
+            const flashKey = events.some(e => e.kind === "parse_fail") ? "store_efficiency_score" : null;
+            if (flashKey) {
+                const g = document.querySelector(`.reward-gauge[data-key="${flashKey}"]`);
+                if (g) {
+                    g.classList.add("flash-red");
+                    setTimeout(() => g.classList.remove("flash-red"), 800);
+                }
+            }
+        }
+    }
+}
+
+
+// ───────── RL Training Telemetry ─────────
+//
+// Stage indicator + REINFORCE loss curve. Pulls /training/status every
+// 2.5s. The loss curve renders into the canvas with a simple line
+// drawing -- no external chart lib so it stays small.
+
+function setStage(stage) {
+    document.querySelectorAll(".training-stage").forEach(el => {
+        const s = el.dataset.stage;
+        const status = el.querySelector(".stage-status");
+        el.classList.remove("active", "done");
+        if (s === stage) {
+            el.classList.add("active");
+            if (status) status.textContent = "▶";
+        } else if (stageOrder.indexOf(s) < stageOrder.indexOf(stage)) {
+            el.classList.add("done");
+            if (status) status.textContent = "✓";
+        } else {
+            if (status) status.textContent = "⏸";
+        }
+    });
+}
+const stageOrder = ["sft", "rollout", "reinforce", "dpo"];
+
+function drawTrainingCurve(history) {
+    const canvas = $("training-loss-canvas");
+    if (!canvas || !history || history.length === 0) return;
+    const ctx = canvas.getContext("2d");
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const losses = history.map(h => h.loss);
+    const kls    = history.map(h => h.kl);
+    const min = Math.min(0, ...losses);
+    const max = Math.max(1e-6, ...losses);
+    const range = max - min || 1;
+    // Loss line
+    ctx.strokeStyle = "#fbbf24"; ctx.lineWidth = 2;
+    ctx.beginPath();
+    losses.forEach((v, i) => {
+        const x = (i / Math.max(1, losses.length - 1)) * (W - 20) + 10;
+        const y = H - 20 - ((v - min) / range) * (H - 40);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    // KL line (rescaled to its own y-axis on the right)
+    const klMax = Math.max(0.05, ...kls.map(Math.abs));
+    ctx.strokeStyle = "#60a5fa"; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    kls.forEach((v, i) => {
+        const x = (i / Math.max(1, kls.length - 1)) * (W - 20) + 10;
+        const y = H - 20 - (v / klMax) * (H - 40) * 0.4 - 4;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    // Zero line
+    const zeroY = H - 20 - ((0 - min) / range) * (H - 40);
+    ctx.strokeStyle = "rgba(255,255,255,0.15)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(10, zeroY); ctx.lineTo(W - 10, zeroY); ctx.stroke();
+    // Legend
+    ctx.fillStyle = "#fbbf24"; ctx.font = "10px JetBrains Mono";
+    ctx.fillText("loss (left)", 10, 14);
+    ctx.fillStyle = "#60a5fa";
+    ctx.fillText("KL (right, scaled)", 80, 14);
+}
+
+async function pollTrainingStatus() {
+    try {
+        const r = await fetch("/training/status");
+        const data = await r.json();
+        setStage(data.current_stage || "idle");
+        const history = data.reinforce_history || [];
+        drawTrainingCurve(history);
+        const meta = $("training-meta");
+        if (meta) {
+            if (history.length === 0) {
+                meta.innerHTML = data.last_event
+                    ? `<span class="muted">${escapeHTML(data.last_event)}</span>`
+                    : `<span class="muted">no telemetry yet — POST to /training/event from the notebook</span>`;
+            } else {
+                const h = history[history.length - 1];
+                const losses = history.map(s => s.loss);
+                meta.textContent = `step ${h.step}  loss=${h.loss.toFixed(4)}  ` +
+                    `policy=${h.policy_loss.toFixed(4)}  KL=${h.kl.toFixed(4)}  ` +
+                    `(${history.length} steps; loss range ${Math.min(...losses).toFixed(2)} → ${Math.max(...losses).toFixed(2)})`;
+            }
+        }
+        const buf = data.buffer_quality || {};
+        const fill = $("buffer-fill");
+        const text = $("buffer-text");
+        const tot = Number(buf.total_briefs || 0);
+        const sco = Number(buf.scorable_briefs || 0);
+        const pct = tot > 0 ? (sco / tot) * 100 : 0;
+        if (fill) fill.style.width = pct.toFixed(0) + "%";
+        if (text) text.textContent = tot > 0 ? `${sco} / ${tot} (${pct.toFixed(0)}%)` : "—";
+    } catch (e) { /* ignore */ }
+}
+setInterval(pollTrainingStatus, 2500);
+pollTrainingStatus();
+
+
+// ───────── Decision Flow ─────────
+//
+// For the latest tick frame, render the four-stage RL loop:
+// observation → brief sections → reward chain → learning hook.
+
+const SECTION_ORDER = ["SITUATION", "SIGNAL ANALYSIS", "VIABILITY CHECK",
+                       "RECOMMENDATION", "DIRECTIVE", "CONFIDENCE"];
+
+function parseBriefSections(briefText) {
+    const sections = {};
+    if (!briefText) return sections;
+    const lines = briefText.split(/\r?\n/);
+    let current = null;
+    let buf = [];
+    for (const line of lines) {
+        const m = line.match(/^([A-Z][A-Z ]{3,}):\s*(.*)$/);
+        const head = m && SECTION_ORDER.includes(m[1].trim()) ? m[1].trim() : null;
+        if (head) {
+            if (current) sections[current] = buf.join("\n").trim();
+            current = head; buf = [m[2]];
+        } else if (current) {
+            buf.push(line);
+        }
+    }
+    if (current) sections[current] = buf.join("\n").trim();
+    return sections;
+}
+
+function updateDecisionFlow(frame, lastObservation) {
+    if (!frame) return;
+    // 1. Observation (truncated)
+    const obsEl = $("flow-observation");
+    if (obsEl) {
+        const obsText = lastObservation || "(observation not captured this frame)";
+        obsEl.textContent = obsText.length > 600 ? obsText.slice(0, 600) + " …" : obsText;
+    }
+    // 2. Brief sections
+    const briefEl = $("flow-brief");
+    if (briefEl) {
+        const sections = parseBriefSections(frame.latest_brief || frame.reasoning || "");
+        const html = SECTION_ORDER.map(sec => {
+            const body = sections[sec] || "—";
+            return `<div class="section-header">${sec}</div>` +
+                   `<div class="section-body">${escapeHTML(body.slice(0, 240))}</div>`;
+        }).join("");
+        briefEl.innerHTML = html || "<span class='muted'>no brief in this frame</span>";
+    }
+    // 3. Reward chain
+    const rewardsEl = $("flow-rewards");
+    if (rewardsEl) {
+        const rs = [
+            ["r1 Pricing",    frame.r1_pricing,    0.28],
+            ["r2 Farmer",     frame.r2_farmer,     0.18],
+            ["r3 Trend",      frame.r3_trend,      0.15],
+            ["r4 Intra-Fleet",frame.r4_intrafleet, 0.12],
+            ["r5 Micro-Mfg",  frame.r5_micromfg,   0.10],
+            ["r6 Event",      frame.r6_event,      0.10],
+            ["r7 SurplusBox", frame.r7_surplusbox, 0.07],
+        ];
+        const ses = Number(frame.store_efficiency_score ?? 0);
+        const lines = rs.map(([name, v, w]) => {
+            const val = Number(v ?? 0);
+            const cls = val > 0 ? "positive" : (val < 0 ? "negative" : "zero");
+            const contrib = val * w;
+            return `<div class="reward-line ${cls}">
+                        <span class="name">${escapeHTML(name)}</span>
+                        <span class="val">${(val>=0?"+":"")+val.toFixed(3)}  →  ${(contrib>=0?"+":"")+contrib.toFixed(3)}</span>
+                    </div>`;
+        }).join("");
+        const sesLine = `<div class="reward-line ${ses>0?'positive':ses<0?'negative':'zero'}" style="margin-top:6px;border-top:1px dashed rgba(255,255,255,0.10);padding-top:6px;">
+                            <span class="name">SES = Σ wᵢ·rᵢ</span>
+                            <span class="val">${(ses>=0?"+":"")+ses.toFixed(3)}</span>
+                         </div>`;
+        const penalties = (frame.penalty_events || []).map(p =>
+            `<div class="reward-line negative"><span class="name">PENALTY ${escapeHTML(p.kind)}</span><span class="val">${p.magnitude ? "−" + Number(p.magnitude).toFixed(2) : ""}</span></div>`).join("");
+        rewardsEl.innerHTML = lines + sesLine + penalties;
+    }
+    // 4. Learn step (descriptive — points to the buffer + REINFORCE flow)
+    const learnEl = $("flow-learn");
+    if (learnEl) {
+        const lines = [
+            `<div class="flow-learn-line"><span class="key">→ buffer</span>this brief lands in <code>trajectory_buffer</code> with prompt + brief_text + reward.</div>`,
+            `<div class="flow-learn-line"><span class="key">→ advantage</span>(reward − mean) / std → REINFORCE loss = −advantage · log π_θ(brief).</div>`,
+            `<div class="flow-learn-line"><span class="key">→ KL anchor</span>+ β · KL(π_θ ‖ π_ref) keeps the policy from drifting too far from SFT.</div>`,
+            `<div class="flow-learn-line"><span class="key">→ next brief</span>updated weights → better directive on the next observation.</div>`,
+        ];
+        learnEl.innerHTML = lines.join("");
+    }
+}
+
+
+// Hook the new panels into the existing sim_frames poller. Keep the
+// previous renderFrame call -- the new updates are additive.
+const _origRenderFrame = renderFrame;
+let _lastObservation = "";
+renderFrame = function(frame) {
+    _origRenderFrame(frame);
+    try { updateRewardSignal(frame); } catch (e) {}
+    try { updateDecisionFlow(frame, _lastObservation); } catch (e) {}
+    if (frame && frame.latest_brief) _lastObservation = frame.reasoning || "";
+};
+
+
 // ───────── Before vs After RL comparison ─────────
 //
 // Drives the "compare" panel: runs the same scenario through every loaded

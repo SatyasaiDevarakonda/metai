@@ -30,6 +30,159 @@
 
 <main>
 
+<!-- ╭──── Project Atlas (envs / agents / rewards / penalties) ─────╮ -->
+<section class="card panel atlas-panel">
+    <h2>Project Atlas <span class="tagline">every env, every agent, every reward + penalty</span></h2>
+    <p class="hint">A one-glance inventory of what this project ships. Envs that the agent can be trained in,
+    agents the hero coexists with, the eight reward components that compose into <strong>SES</strong>, and the
+    global penalties that fire on parse / validation failures. Pulled live from
+    <code>/atlas/inventory</code>.</p>
+    <div class="atlas-grid">
+        <div class="atlas-block">
+            <div class="atlas-block-header"><span>Environments (6)</span></div>
+            <div id="atlas-envs"></div>
+        </div>
+        <div class="atlas-block">
+            <div class="atlas-block-header"><span>Agents (8)</span></div>
+            <div id="atlas-agents"></div>
+        </div>
+        <div class="atlas-block">
+            <div class="atlas-block-header"><span>Reward components (7) + SES weights</span></div>
+            <div id="atlas-rewards"></div>
+        </div>
+        <div class="atlas-block">
+            <div class="atlas-block-header"><span>Global penalties + active scenario engines</span></div>
+            <div id="atlas-penalties"></div>
+            <div id="atlas-scenarios" style="margin-top:10px;"></div>
+        </div>
+    </div>
+</section>
+
+<!-- ╭──── Live Reward Signal (r1..r7 + SES gauges + penalty alerts) ─╮ -->
+<section class="card panel reward-signal-panel">
+    <h2>Live reward signal <span class="tagline">per-brief r1..r7 + SES + anti-hack alerts</span></h2>
+    <p class="hint">Each gauge updates from the latest tick frame the env emitted. The SES gauge is the headline:
+    SES &ge; 0.70 over five evals promotes the agent to the next curriculum scenario. Red flashes mean a
+    penalty / anti-hack rule fired this brief.</p>
+    <div class="reward-gauges">
+        <div class="reward-gauge headline" data-key="store_efficiency_score">
+            <div class="gauge-label">SES</div>
+            <div class="gauge-value mono">+0.000</div>
+            <div class="gauge-bar"><div class="gauge-fill"></div></div>
+            <div class="gauge-hint">composite (target ≥ 0.70)</div>
+        </div>
+        <div class="reward-gauge" data-key="r1_pricing">
+            <div class="gauge-label">r1 Pricing <span class="weight">×0.28</span></div>
+            <div class="gauge-value mono">+0.000</div>
+            <div class="gauge-bar"><div class="gauge-fill r1"></div></div>
+        </div>
+        <div class="reward-gauge" data-key="r2_farmer">
+            <div class="gauge-label">r2 Farmer <span class="weight">×0.18</span></div>
+            <div class="gauge-value mono">+0.000</div>
+            <div class="gauge-bar"><div class="gauge-fill r2"></div></div>
+        </div>
+        <div class="reward-gauge" data-key="r3_trend">
+            <div class="gauge-label">r3 Trend <span class="weight">×0.15</span></div>
+            <div class="gauge-value mono">+0.000</div>
+            <div class="gauge-bar"><div class="gauge-fill r3"></div></div>
+        </div>
+        <div class="reward-gauge" data-key="r4_intrafleet">
+            <div class="gauge-label">r4 Intra-Fleet <span class="weight">×0.12</span></div>
+            <div class="gauge-value mono">+0.000</div>
+            <div class="gauge-bar"><div class="gauge-fill r4"></div></div>
+        </div>
+        <div class="reward-gauge" data-key="r5_micromfg">
+            <div class="gauge-label">r5 Micro-Mfg <span class="weight">×0.10</span></div>
+            <div class="gauge-value mono">+0.000</div>
+            <div class="gauge-bar"><div class="gauge-fill r5"></div></div>
+        </div>
+        <div class="reward-gauge" data-key="r6_event">
+            <div class="gauge-label">r6 Event <span class="weight">×0.10</span></div>
+            <div class="gauge-value mono">+0.000</div>
+            <div class="gauge-bar"><div class="gauge-fill r6"></div></div>
+        </div>
+        <div class="reward-gauge" data-key="r7_surplusbox">
+            <div class="gauge-label">r7 Surplus Box <span class="weight">×0.07</span></div>
+            <div class="gauge-value mono">+0.000</div>
+            <div class="gauge-bar"><div class="gauge-fill r7"></div></div>
+        </div>
+    </div>
+    <div class="reward-alerts">
+        <span class="reward-alerts-label">Penalty events this brief:</span>
+        <div id="reward-alerts-list" class="reward-alerts-list">
+            <span class="muted">none yet</span>
+        </div>
+    </div>
+</section>
+
+<!-- ╭──── RL Training Telemetry ──────────────────────────────────╮ -->
+<section class="card panel training-panel">
+    <h2>RL training telemetry <span class="tagline">live SFT &rarr; REINFORCE &rarr; DPO state</span></h2>
+    <p class="hint">Cuts through the smoke-vs-training confusion. Shows which stage is currently active, the
+    REINFORCE optimizer-step loss curve, KL drift, and buffer feed quality. Pulls from
+    <code>/training/status</code> &mdash; training cells in the notebook POST events to that endpoint as they
+    progress.</p>
+    <div class="training-grid">
+        <div class="training-stages">
+            <div class="training-stage" data-stage="sft">
+                <div class="stage-name">SFT</div>
+                <div class="stage-status">⏸</div>
+            </div>
+            <div class="training-stage" data-stage="rollout">
+                <div class="stage-name">Rollouts</div>
+                <div class="stage-status">⏸</div>
+            </div>
+            <div class="training-stage" data-stage="reinforce">
+                <div class="stage-name">REINFORCE+KL</div>
+                <div class="stage-status">⏸</div>
+            </div>
+            <div class="training-stage" data-stage="dpo">
+                <div class="stage-name">DPO</div>
+                <div class="stage-status">⏸</div>
+            </div>
+        </div>
+        <div class="training-curves">
+            <canvas id="training-loss-canvas" width="640" height="180"></canvas>
+            <div class="training-meta" id="training-meta">
+                <span class="muted">no telemetry yet</span>
+            </div>
+        </div>
+    </div>
+    <div class="training-buffer">
+        <div class="buffer-label">Buffer feed (REINFORCE-scorable briefs):</div>
+        <div class="buffer-bar"><div id="buffer-fill"></div></div>
+        <span id="buffer-text" class="mono">—</span>
+    </div>
+</section>
+
+<!-- ╭──── Decision Flow (the RL loop, tick-by-tick) ──────────────╮ -->
+<section class="card panel decision-flow-panel">
+    <h2>Decision flow <span class="tagline">observation &rarr; brief &rarr; directive &rarr; reward &rarr; learn</span></h2>
+    <p class="hint">For the latest brief the env produced, this shows the full RL loop: what the agent
+    saw, what it wrote (each of the 6 sections), which directive it issued, which engines fired, and which
+    rewards / penalties applied. The arrow at the end points back to the rollout buffer that feeds REINFORCE.</p>
+    <div class="flow-stages">
+        <div class="flow-stage flow-observation">
+            <div class="flow-stage-header">1. OBSERVATION</div>
+            <pre id="flow-observation" class="flow-body mono">(no observation yet)</pre>
+        </div>
+        <div class="flow-stage flow-brief">
+            <div class="flow-stage-header">2. BRIEF (6 sections)</div>
+            <div id="flow-brief" class="flow-body"></div>
+        </div>
+        <div class="flow-stage flow-rewards">
+            <div class="flow-stage-header">3. REWARD &amp; PENALTY</div>
+            <div id="flow-rewards" class="flow-body"></div>
+        </div>
+        <div class="flow-stage flow-learn">
+            <div class="flow-stage-header">4. LEARN</div>
+            <div id="flow-learn" class="flow-body">
+                <div class="flow-learn-line"><span class="muted">awaiting first brief...</span></div>
+            </div>
+        </div>
+    </div>
+</section>
+
 <!-- ╭──── KPIs ────────────────────────────────────────────────────╮ -->
 <section class="kpi-row">
     <div class="kpi card">
