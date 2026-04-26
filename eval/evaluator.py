@@ -81,6 +81,8 @@ class Evaluator:
             load_in_4bit=True,
         )
         FastLanguageModel.for_inference(self._model)
+        from freshprice_env._gen_utils import quiet_generation_config
+        quiet_generation_config(self._model)
         logger.info("Loaded model from %s for evaluation", self.checkpoint_dir)
 
     # ------------------------------------------------------------------

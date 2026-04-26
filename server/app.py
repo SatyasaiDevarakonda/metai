@@ -31,8 +31,6 @@ Multi-agent commons endpoints (Theme #1):
 Static dashboards:
 
     GET  /                           - V2 multi-agent dashboard
-    GET  /legacy                     - original polling dashboard (kept for
-                                       backwards compatibility)
 """
 
 from __future__ import annotations
@@ -1052,18 +1050,10 @@ if _STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     _V2_INDEX = _STATIC_DIR / "v2" / "index.html"
-    _V1_INDEX = _STATIC_DIR / "index.html"
 
     @app.get("/", include_in_schema=False)
     def dashboard_index():
-        # Prefer v2 if present
-        if _V2_INDEX.is_file():
-            return FileResponse(str(_V2_INDEX))
-        return FileResponse(str(_V1_INDEX))
-
-    @app.get("/legacy", include_in_schema=False)
-    def dashboard_legacy():
-        return FileResponse(str(_V1_INDEX))
+        return FileResponse(str(_V2_INDEX))
 
 
 def main() -> None:

@@ -96,16 +96,18 @@ class LocalAgentRuntime:
             device_map=device_map,
         )
         self._model.eval()
+        from freshprice_env._gen_utils import quiet_generation_config
+        quiet_generation_config(self._model)
 
     def generate(self, prompt: str, *, max_new_tokens: int = 600,
                  temperature: float = 0.7) -> str:
         import torch  # noqa: E402  (lazy)
         chat_prompt = self._format_chat(prompt)
+        # Standardise device handling on model.device (works for CPU,
+        # CUDA, MPS, ROCm, and multi-GPU device_map="auto" loads).
         inputs = self._tokenizer(
             chat_prompt, return_tensors="pt", truncation=True, max_length=4096,
-        )
-        if torch.cuda.is_available():
-            inputs = {k: v.to("cuda") for k, v in inputs.items()}
+        ).to(self._model.device)
         with torch.no_grad():
             out = self._model.generate(
                 **inputs,

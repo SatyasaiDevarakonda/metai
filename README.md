@@ -204,6 +204,32 @@ export HF_TOKEN="hf_..."
 …and click **Run live demo** at the top of the dashboard. The Simulation
 Theater below auto-plays the recorded tick frames.
 
+### Configuration — single source of truth
+
+Three config sources exist; **environment variables are authoritative**.
+
+| Source | Role | Authoritative? |
+|---|---|---|
+| Environment variables | Runtime config (model paths, tokens, dashboard URL) | **Yes** |
+| `.env.example` | Documentation of every supported env var with defaults | No — copy to `.env` and edit |
+| `openenv.yaml` | OpenEnv submission descriptor (image, command, ports) | Only for OpenEnv runtime |
+
+Variables read at runtime:
+
+| Variable | Default | Where used |
+|---|---|---|
+| `AGENT_BACKEND` | auto-detect | `server.agent_runtime.get_agent_runtime()` — `local` / `hf_inference` / `scripted` |
+| `MODEL_PATH` | — | `LocalAgentRuntime` checkpoint dir |
+| `SFT_MODEL_PATH` | — | Comparison rig "sft" slot |
+| `RL_MODEL_PATH` | — | Comparison rig "rl" slot |
+| `HF_REPO_ID` / `HF_TOKEN` | — | `HFInferenceAgentRuntime` |
+| `DASHBOARD_URL` | — | Kaggle REINFORCE cell pushes live `/training/event` updates here |
+| `EXTERNAL_GRADER` | — | `eval.external_grader.get_external_grader()` — `patronus` / `halluminate` / `local` |
+| `PATRONUS_API_KEY` / `HALLUMINATE_API_KEY` | — | Auth for the corresponding grader |
+| `WANDB_PROJECT` | — | When set, SFTConfig reports metrics to W&B; otherwise off |
+| `LOG_LEVEL` | `INFO` | Python logging level for CLI scripts |
+| `HOST` / `PORT` / `WORKERS` | `0.0.0.0` / `8000` / `1` | Uvicorn server bind |
+
 The full Kaggle → VS Code path with all environment variables is in
 [`.env.example`](.env.example).
 

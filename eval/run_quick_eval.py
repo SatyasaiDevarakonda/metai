@@ -46,6 +46,8 @@ def _load_llm_agent(checkpoint_path: str):
         load_in_4bit=True,
     )
     FastLanguageModel.for_inference(model)
+    from freshprice_env._gen_utils import quiet_generation_config
+    quiet_generation_config(model)
 
     class _LLMAgent:
         def act(self, obs: str, info: dict) -> str:

@@ -60,8 +60,14 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("inference_comparison")
 
 
-def run_one_episode(runtime, scenario, seed: int, max_briefs: int) -> dict:
-    """Run a single episode through one runtime; return per-episode stats."""
+def run_one_episode(runtime, scenario, seed: int, max_briefs: int,
+                    external_grader=None) -> dict:
+    """Run a single episode through one runtime; return per-episode stats.
+
+    If ``external_grader`` is provided, it is called once per brief and
+    its overall score is averaged into ``external_score_mean`` so the
+    judge-facing column appears in ``data/comparison_results.json``.
+    """
     from freshprice_env.freshprice_env import FreshPriceEnv
 
     env = FreshPriceEnv(scenario=scenario, seed=seed)
@@ -69,7 +75,10 @@ def run_one_episode(runtime, scenario, seed: int, max_briefs: int) -> dict:
     ses_total, total_reward = 0.0, 0.0
     n_briefs, anti_hack = 0, 0
     sample_briefs: list[str] = []
+    external_scores: list[float] = []
+    external_halluc: list[float] = []
     for step in range(max_briefs):
+        prompt_for_grader = obs
         try:
             brief = runtime.generate(obs)
         except Exception as e:  # noqa: BLE001
@@ -82,9 +91,16 @@ def run_one_episode(runtime, scenario, seed: int, max_briefs: int) -> dict:
             sample_briefs.append(brief)
         if not info.get("parse_success", True):
             anti_hack += 1
+        if external_grader is not None:
+            try:
+                gs = external_grader.score_brief(prompt_for_grader, brief)
+                external_scores.append(gs.overall)
+                external_halluc.append(gs.hallucination)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("external grader failed: %s", e)
         if done:
             break
-    return {
+    out = {
         "steps_completed": n_briefs,
         "total_reward":    round(total_reward, 4),
         "final_wrr":       round(env.state().get("wrr_so_far", 0.0), 4),
@@ -92,6 +108,12 @@ def run_one_episode(runtime, scenario, seed: int, max_briefs: int) -> dict:
         "anti_hack_violations": anti_hack,
         "sample_briefs":   sample_briefs,
     }
+    if external_scores:
+        out["external_score_mean"] = round(
+            sum(external_scores) / len(external_scores), 4)
+        out["external_hallucination_mean"] = round(
+            sum(external_halluc) / len(external_halluc), 4)
+    return out
 
 
 def aggregate(per_episode_runs: list[dict]) -> dict:
@@ -102,7 +124,7 @@ def aggregate(per_episode_runs: list[dict]) -> dict:
     samples = []
     for r in per_episode_runs:
         samples.extend(r.get("sample_briefs", []))
-    return {
+    out = {
         "episodes_run":     n,
         "mean_ses":         round(sum(r["mean_ses"] for r in per_episode_runs) / n, 4),
         "final_wrr_mean":   round(sum(r["final_wrr"] for r in per_episode_runs) / n, 4),
@@ -110,6 +132,15 @@ def aggregate(per_episode_runs: list[dict]) -> dict:
         "anti_hack_total":  sum(r["anti_hack_violations"] for r in per_episode_runs),
         "sample_briefs":    samples[:3],   # keep a few for the UI
     }
+    ext = [r["external_score_mean"] for r in per_episode_runs
+           if "external_score_mean" in r]
+    if ext:
+        out["external_score_mean"] = round(sum(ext) / len(ext), 4)
+        halluc = [r.get("external_hallucination_mean") for r in per_episode_runs
+                  if "external_hallucination_mean" in r]
+        if halluc:
+            out["external_hallucination_mean"] = round(sum(halluc) / len(halluc), 4)
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -133,6 +164,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seeds", nargs="+", type=int, default=None,
                         help="Explicit seed list; overrides --episodes-per-scenario.")
     parser.add_argument("--out", default="data/comparison_results.json")
+    parser.add_argument("--use-external-grader", action="store_true",
+                        help="Score every brief through the configured "
+                             "ExternalGrader (Patronus / Halluminate / local "
+                             "fallback). Picks provider from --grader or "
+                             "$EXTERNAL_GRADER.")
+    parser.add_argument("--grader", default=None,
+                        choices=["patronus", "halluminate", "local"],
+                        help="Override the grader provider name.")
     args = parser.parse_args(argv)
 
     # Build the multi-agent rig.
@@ -152,6 +191,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     logger.info("Loaded runtimes: %s", rig.names)
 
+    external_grader = None
+    if args.use_external_grader:
+        from eval.external_grader import get_external_grader
+        external_grader = get_external_grader(args.grader)
+        logger.info("External grader: %s", external_grader.name)
+
     seeds = args.seeds or list(range(42, 42 + args.episodes_per_scenario))
 
     per_scenario: dict[str, dict[str, dict]] = {}
@@ -170,7 +215,8 @@ def main(argv: list[str] | None = None) -> int:
                 logger.info("  %-12s | %-15s | seed %d", runtime_name, scenario_name, s)
                 episode_results.append(
                     run_one_episode(runtime, scenario, seed=s,
-                                    max_briefs=args.max_briefs)
+                                    max_briefs=args.max_briefs,
+                                    external_grader=external_grader)
                 )
             per_scenario[scenario_name][runtime_name] = aggregate(episode_results)
 

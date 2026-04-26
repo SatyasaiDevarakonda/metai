@@ -79,6 +79,8 @@ class FreshPriceGRPOTrainer:
             dtype=None,
             load_in_4bit=True,
         )
+        from freshprice_env._gen_utils import quiet_generation_config
+        quiet_generation_config(self.model)
 
         # Enable training mode with LoRA
         self.model = FastLanguageModel.get_peft_model(

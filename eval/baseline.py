@@ -37,7 +37,7 @@ def run_baseline(
         scenarios = ["STABLE_WEEK", "BUSY_WEEKEND", "FARMER_WEEK", "TREND_WEEK", "CRISIS_WEEK"]
 
     # 1. Load base model (4-bit, inference only)
-    print(f"Loading base model: {model_id}")
+    logger.info("Loading base model: %s", model_id)
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_id,
         max_seq_length=4096,
@@ -45,6 +45,8 @@ def run_baseline(
         load_in_4bit=True,
     )
     FastLanguageModel.for_inference(model)
+    from freshprice_env._gen_utils import quiet_generation_config
+    quiet_generation_config(model)
 
     # 2. Run episodes
     results: dict[str, dict] = {}
@@ -54,7 +56,7 @@ def run_baseline(
         level = scenario.value
         ep_seeds = [level * 1000 + i for i in range(episodes_per_scenario)]
 
-        print(f"\nEvaluating {scenario_name} ({len(ep_seeds)} episodes)...")
+        logger.info("Evaluating %s (%d episodes)...", scenario_name, len(ep_seeds))
 
         wrrs: list[float] = []
         qualities: list[float] = []
@@ -95,7 +97,10 @@ def run_baseline(
             qualities.append(ep_quality)
             violations.append(ep_violations)
 
-            print(f"  Episode {i + 1}/{len(ep_seeds)}: WRR={ep_wrr:.4f} Quality={ep_quality:.3f} Violations={ep_violations}")
+            logger.info(
+                "  Episode %d/%d: WRR=%.4f Quality=%.3f Violations=%d",
+                i + 1, len(ep_seeds), ep_wrr, ep_quality, ep_violations,
+            )
 
         results[scenario_name] = {
             "wrr_mean": round(_mean(wrrs), 4),
@@ -120,21 +125,19 @@ def run_baseline(
     with open(output_path, "w") as f:
         json.dump(output, f, indent=2)
 
-    # 4. Print table
-    print(f"\n{'=' * 60}")
-    print("BASELINE RESULTS (Zero-Shot)")
-    print(f"Model: {model_id}")
-    print(f"{'=' * 60}")
-    print(f"  {'Scenario':<18} {'WRR':>7} {'Quality':>9} {'Violations':>11}")
-    print(f"  {'─' * 47}")
+    # 4. Log summary table
+    logger.info("=" * 60)
+    logger.info("BASELINE RESULTS (Zero-Shot) -- Model: %s", model_id)
+    logger.info("=" * 60)
+    logger.info("  %-18s %7s %9s %11s",
+                "Scenario", "WRR", "Quality", "Violations")
     for scenario_name, stats in results.items():
-        print(
-            f"  {scenario_name:<18} "
-            f"{stats['wrr_mean']:>7.3f} "
-            f"{stats['quality_mean']:>9.3f} "
-            f"{stats['violations_mean']:>11.1f}"
+        logger.info(
+            "  %-18s %7.3f %9.3f %11.1f",
+            scenario_name, stats["wrr_mean"],
+            stats["quality_mean"], stats["violations_mean"],
         )
-    print(f"\n  Saved to {output_file}")
+    logger.info("Saved to %s", output_file)
 
     # 5. Return
     return output

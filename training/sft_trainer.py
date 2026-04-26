@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 import torch
@@ -132,6 +133,8 @@ def run_sft(
         dtype=None,
         load_in_4bit=True,
     )
+    from freshprice_env._gen_utils import quiet_generation_config
+    quiet_generation_config(model)
 
     # 2. Add LoRA adapters
     model = FastLanguageModel.get_peft_model(
@@ -152,6 +155,16 @@ def run_sft(
     dataset = load_sft_dataset(data_dir)
 
     # 4. Configure SFTTrainer
+    #
+    # Speed knobs (TASK 5 / Roadmap #4):
+    #  * fp16/bf16 picked by hardware. T4 has no bf16 -> fp16; A100 -> bf16.
+    #  * optim="adamw_8bit" via bitsandbytes saves ~3 GB on Qwen-7B.
+    #  * dataloader_num_workers + pin_memory keeps the GPU fed.
+    #  * logging_steps=20 (was 10) halves logging overhead in the hot loop.
+    #  * report_to="none" by default -- W&B runs only when WANDB_PROJECT is
+    #    set, so notebooks don't stall on missing creds.
+    use_bf16 = bool(torch.cuda.is_available() and torch.cuda.is_bf16_supported())
+    report_to = "wandb" if os.environ.get("WANDB_PROJECT") else "none"
     training_args = SFTConfig(
         output_dir=output_dir,
         num_train_epochs=num_epochs,
@@ -160,14 +173,18 @@ def run_sft(
         learning_rate=learning_rate,
         warmup_ratio=0.1,
         lr_scheduler_type="cosine",
-        fp16=not torch.cuda.is_bf16_supported(),
-        bf16=torch.cuda.is_bf16_supported(),
-        logging_steps=10,
+        fp16=not use_bf16,
+        bf16=use_bf16,
+        optim="adamw_8bit",
+        tf32=False,
+        dataloader_num_workers=2,
+        dataloader_pin_memory=True,
+        logging_steps=20,
         save_steps=50,
         seed=seed,
         max_seq_length=max_seq_length,
         dataset_text_field="text",
-        report_to="wandb",
+        report_to=report_to,
     )
 
     trainer = SFTTrainer(
@@ -221,6 +238,8 @@ def _verify_checkpoint(
             load_in_4bit=True,
         )
         FastLanguageModel.for_inference(model)
+        from freshprice_env._gen_utils import quiet_generation_config
+        quiet_generation_config(model)
 
         system_prompt = OperatingBriefPromptBuilder.SYSTEM_PROMPT
         full_prompt = (

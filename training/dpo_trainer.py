@@ -58,6 +58,8 @@ def run_dpo(
         dtype=None,
         load_in_4bit=True,
     )
+    from freshprice_env._gen_utils import quiet_generation_config
+    quiet_generation_config(model)
 
     # 3. Add LoRA adapters
     model = FastLanguageModel.get_peft_model(
@@ -236,6 +238,8 @@ def _run_verification_episodes(
         load_in_4bit=True,
     )
     FastLanguageModel.for_inference(model)
+    from freshprice_env._gen_utils import quiet_generation_config
+    quiet_generation_config(model)
 
     wrrs: list[float] = []
 
